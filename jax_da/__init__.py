@@ -1,7 +1,14 @@
 """jax-da: state-space models, scoring, and oracles for testing data assimilation in JAX."""
 
-from jax_da import metrics
-from jax_da.dynamics import LinearDynamics, Lorenz63, Lorenz96
+from jax_da import metrics, problems
+from jax_da.dynamics import (
+    KolmogorovFlow,
+    KuramotoSivashinsky,
+    LinearDynamics,
+    Lorenz63,
+    Lorenz96,
+    Lorenz96TwoScale,
+)
 from jax_da.geometry import Ring, Torus2D, Unstructured
 from jax_da.noise import Cauchy, Gaussian, GaussianMixture, Laplace, StudentT
 from jax_da.observations import Elementwise, Linear, Selector
@@ -15,12 +22,15 @@ __all__ = [
     "FilterResult",
     "Gaussian",
     "GaussianMixture",
+    "KolmogorovFlow",
+    "KuramotoSivashinsky",
     "KalmanOracle",
     "Laplace",
     "Linear",
     "LinearDynamics",
     "Lorenz63",
     "Lorenz96",
+    "Lorenz96TwoScale",
     "Ring",
     "Selector",
     "SmootherResult",
@@ -30,4 +40,5 @@ __all__ = [
     "Trajectory",
     "Unstructured",
     "metrics",
+    "problems",
 ]
