@@ -111,9 +111,11 @@ def test_geometry_defaults_to_unstructured_and_is_kept():
 
 
 def test_model_survives_pytree_rebuilds_and_batching():
-    # tree.map with int leaves (how in_axes trees are built) must not trip parameter validation.
+    # Rebuilds with non-numeric leaves (tuples from tree.map(jnp.shape)) must not trip validation.
+    # Integer leaves are validated like real parameters on purpose: StudentT(3, df=-1) must raise.
     ssm = linear_ssm()
-    assert jax.tree.map(lambda _: 0, ssm).geometry == ssm.geometry
+    shapes = jax.tree.map(jnp.shape, ssm)
+    assert shapes.geometry == ssm.geometry and shapes.initial.loc == (4,)
     # A model returned by vmap has a batch axis on every leaf; dimensions come from trailing axes.
     stds = jnp.array([[0.3, 0.6], [1.0, 2.0]])
     batched = jax.vmap(lambda s: ssm.replace(observation=Additive(Linear(H), Gaussian.diagonal(s))))(stds)

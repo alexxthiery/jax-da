@@ -17,16 +17,24 @@ import math
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import struct
 from jax import Array
 from jax.scipy.special import gammaln
 
-from jax_da._validation import check_event_shape, is_concrete
+from jax_da._validation import (
+    check_event_shape,
+    check_finite,
+    check_positive,
+    is_concrete,
+    is_numeric,
+    per_component,
+)
 
 
-def _check_positive(name, value):
-    if is_concrete(value) and not bool(jnp.all(jnp.asarray(value) > 0)):
-        raise ValueError(f"{name} must be positive, got {value}")
+def _check_loc(law) -> None:
+    per_component(law, "loc", law.dim)
+    check_finite(law.loc, "loc")
 
 
 @struct.dataclass
@@ -36,14 +44,14 @@ class Gaussian:
     Build with ``Gaussian.isotropic``, ``Gaussian.diagonal``, or ``Gaussian.full``,
     each taking an optional ``loc``.
     For iid or diagonal noise ``scale_tril`` is None and ``std`` holds the
-    per-component standard deviation (shape ``()`` or ``(dim,)``); for full
+    per-component standard deviation (normalized to shape ``(dim,)``); for full
     covariance ``std`` is None and ``scale_tril`` is the Cholesky factor.
 
     Attributes:
         dim: Dimension.
         std: Per-component standard deviation, or None.
         scale_tril: Lower Cholesky factor of the covariance, ``(dim, dim)``, or None.
-        loc: Mean, scalar or ``(dim,)``.
+        loc: Mean; a scalar is broadcast to ``(dim,)``.
     """
 
     dim: int = struct.field(pytree_node=False)
@@ -57,23 +65,50 @@ class Gaussian:
         if self.std is not None and self.scale_tril is not None:
             raise ValueError("Gaussian takes std or scale_tril, not both")
         if self.std is not None:
-            _check_positive("std", self.std)
+            per_component(self, "std", self.dim)
+            check_positive(self.std, "std")
+        if is_numeric(self.scale_tril):
+            if np.shape(self.scale_tril)[-2:] != (self.dim, self.dim):
+                raise ValueError(f"scale_tril must have trailing shape ({self.dim}, {self.dim}), "
+                                 f"got {np.shape(self.scale_tril)}")
+            if is_concrete(self.scale_tril) and not bool(np.all(np.isfinite(np.asarray(self.scale_tril)))):
+                raise ValueError("covariance must be finite and symmetric positive definite; "
+                                 "its Cholesky factorization failed")
+        _check_loc(self)
 
     @classmethod
     def isotropic(cls, dim: int, std: float, loc=0.0) -> "Gaussian":
-        return cls(dim=dim, std=jnp.asarray(std, dtype=float), loc=jnp.asarray(loc, dtype=float))
+        if np.ndim(std) != 0:
+            raise ValueError(f"isotropic std must be a scalar, got shape {np.shape(std)}; use Gaussian.diagonal")
+        return cls(dim=dim, std=jnp.asarray(std, dtype=float), loc=loc)
 
     @classmethod
     def diagonal(cls, std: Array, loc=0.0) -> "Gaussian":
+        if np.ndim(std) != 1:
+            raise ValueError(f"diagonal std must be a vector of shape (d,), got shape {np.shape(std)}")
         std = jnp.asarray(std, dtype=float)
-        return cls(dim=int(std.shape[0]), std=std, loc=jnp.asarray(loc, dtype=float))
+        return cls(dim=int(std.shape[0]), std=std, loc=loc)
 
     @classmethod
     def full(cls, cov: Array, loc=0.0) -> "Gaussian":
         cov = jnp.asarray(cov, dtype=float)
-        return cls(dim=int(cov.shape[0]), scale_tril=jnp.linalg.cholesky(cov), loc=jnp.asarray(loc, dtype=float))
+        if cov.ndim != 2 or cov.shape[0] != cov.shape[1]:
+            raise ValueError(f"cov must be a square matrix, got shape {cov.shape}")
+        if is_concrete(cov):
+            c = np.asarray(cov)
+            if not np.all(np.isfinite(c)):
+                raise ValueError("cov must be finite and symmetric positive definite; it contains NaN or inf")
+            if not np.allclose(c, c.T, rtol=1e-8, atol=1e-12 * max(1.0, np.abs(c).max())):
+                raise ValueError(f"cov must be symmetric; max |cov - cov.T| = {np.abs(c - c.T).max():.3g}")
+        return cls(dim=int(cov.shape[0]), scale_tril=jnp.linalg.cholesky(cov), loc=loc)
+
+    def _require_parameters(self) -> None:
+        if self.std is None and self.scale_tril is None:
+            raise ValueError("Gaussian has neither std nor scale_tril; build it with "
+                             "Gaussian.isotropic, diagonal, or full")
 
     def sample(self, key: Array, shape: tuple[int, ...] = ()) -> Array:
+        self._require_parameters()
         z = jax.random.normal(key, shape + (self.dim,))
         if self.scale_tril is None:
             return self.loc + self.std * z
@@ -81,6 +116,7 @@ class Gaussian:
 
     def log_prob(self, x: Array) -> Array:
         check_event_shape(x, (self.dim,))
+        self._require_parameters()
         e = x - self.loc
         if self.scale_tril is None:
             std = jnp.broadcast_to(self.std, (self.dim,))
@@ -121,8 +157,10 @@ class StudentT:
     loc: Array = 0.0
 
     def __post_init__(self):
-        _check_positive("df", self.df)
-        _check_positive("scale", self.scale)
+        check_positive(self.df, "df")
+        per_component(self, "scale", self.dim)
+        check_positive(self.scale, "scale")
+        _check_loc(self)
 
     @classmethod
     def with_std(cls, dim: int, df: float, std: float, loc=0.0) -> "StudentT":
@@ -166,7 +204,9 @@ class Cauchy:
     loc: Array = 0.0
 
     def __post_init__(self):
-        _check_positive("scale", self.scale)
+        per_component(self, "scale", self.dim)
+        check_positive(self.scale, "scale")
+        _check_loc(self)
 
     def sample(self, key: Array, shape: tuple[int, ...] = ()) -> Array:
         return self.loc + self.scale * jax.random.cauchy(key, shape + (self.dim,))
@@ -200,7 +240,9 @@ class Laplace:
     loc: Array = 0.0
 
     def __post_init__(self):
-        _check_positive("scale", self.scale)
+        per_component(self, "scale", self.dim)
+        check_positive(self.scale, "scale")
+        _check_loc(self)
 
     @classmethod
     def with_std(cls, dim: int, std: float, loc=0.0) -> "Laplace":
@@ -243,10 +285,12 @@ class GaussianMixture:
     loc: Array = 0.0
 
     def __post_init__(self):
-        _check_positive("std", self.std)
-        _check_positive("outlier_scale", self.outlier_scale)
+        per_component(self, "std", self.dim)
+        check_positive(self.std, "std")
+        check_positive(self.outlier_scale, "outlier_scale")
         if is_concrete(self.outlier_prob) and not 0 <= self.outlier_prob < 1:
             raise ValueError(f"outlier_prob must lie in [0, 1), got {self.outlier_prob}")
+        _check_loc(self)
 
     def sample(self, key: Array, shape: tuple[int, ...] = ()) -> Array:
         k_mask, k_z = jax.random.split(key)
@@ -288,6 +332,11 @@ class PointMass:
     """
 
     value: Array
+
+    def __post_init__(self):
+        if is_numeric(self.value) and np.ndim(self.value) < 1:
+            raise ValueError(f"PointMass value must have shape (..., dim), got shape {np.shape(self.value)}")
+        check_finite(self.value, "PointMass value")
 
     @property
     def dim(self) -> int:

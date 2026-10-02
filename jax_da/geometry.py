@@ -42,6 +42,10 @@ class Ring:
 
     n: int = struct.field(pytree_node=False)
 
+    def __post_init__(self):
+        if self.n < 1:
+            raise ValueError(f"Ring needs a positive number of sites, got {self.n}")
+
     @property
     def dim(self) -> int:
         return self.n
@@ -71,6 +75,10 @@ class Torus2D:
 
     height: int = struct.field(pytree_node=False)
     width: int = struct.field(pytree_node=False)
+
+    def __post_init__(self):
+        if self.height < 1 or self.width < 1:
+            raise ValueError(f"Torus2D needs positive height and width, got {self.height} x {self.width}")
 
     @property
     def dim(self) -> int:

@@ -33,7 +33,16 @@ Chaotic presets put it around a point on the attractor reached by a deterministi
 **Flat states, structural typing, geometry on the model.** States are always `(..., D)`; the spatial layout is the model's `geometry` field, not the array shape, so every algorithm sees one convention.
 Maps, laws, and conditional laws are duck-typed against `jax_da.protocols`, so user-written components plug in without subclassing.
 
-**Pytree-safe validation.** Objects validate their parameters when built from real values; when JAX rebuilds a pytree with placeholder leaves (`None` or integer `in_axes` specs, `object()`), validation is skipped, and dimensions are read from trailing array axes so a model batched by `vmap` keeps them.
+**Fail early and loud.** A mistake raises `ValueError` with a message naming the problem and, where there is one, the fix; it never returns a plausible-looking wrong answer.
+Shapes are checked everywhere, including under `jit`.
+Values are checked whenever they are concrete, that is outside `jit`: positivity and finiteness of parameters, symmetry and positive definiteness of covariances, integer and distinct indices, nonnegative integer counts, finite metric inputs, and finite oracle results.
+Inside `jit` values cannot be inspected, so a NaN produced there propagates; run once outside `jit` when in doubt.
+Per-component parameters (`std`, `scale`, `loc`, `offset`) are normalized to shape `(dim,)` at construction, so a length-1 vector is rejected instead of silently broadcast.
+`tests/test_fail_loud.py` holds one case per mistake.
+
+**Pytree-safe validation.** `__post_init__` also runs when JAX rebuilds a pytree, with non-numeric placeholder leaves (`object()`, `None`, or tuples from `tree.map(jnp.shape, ...)`) or with batched leaves `(..., dim)`.
+Checks skip non-numeric leaves and read dimensions from trailing axes, so rebuilds and `vmap`-batched models work.
+Plain integers are validated like any parameter, so a `vmap` `in_axes` tree built by mapping every leaf to `0` is rejected; use `in_axes=0` or a prefix instead.
 
 **Out of scope for now.** Time-varying models (a transition depending on $t$) and non-flat states (a discrete mode with a continuous state, as in switching linear dynamical systems).
 

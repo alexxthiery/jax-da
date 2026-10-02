@@ -40,6 +40,10 @@ class Lorenz96TwoScale:
     amplitude_b: float = 10.0
     substeps: int = struct.field(pytree_node=False, default=50)
 
+    def __post_init__(self):
+        if self.substeps < 1:
+            raise ValueError(f"substeps must be a positive integer, got {self.substeps}")
+
     @property
     def dim(self) -> int:
         return self.n_slow * (1 + self.n_fast)

@@ -15,6 +15,7 @@ from flax import struct
 from jax import Array
 from jax.scipy.linalg import cho_factor, cho_solve
 
+from jax_da._validation import check_finite, is_concrete
 from jax_da.conditional import Additive
 from jax_da.laws import Gaussian, PointMass
 from jax_da.maps import Linear, Selector
@@ -107,7 +108,15 @@ class KalmanOracle:
         return cls(A=A, b=b, H=H, c=c, Q=Q, R=R, m0=m0, P0=ssm.initial.cov())
 
     def filter(self, observations: Array) -> FilterResult:
-        """Kalman filter over ``y_1..y_T``, shape ``(T, p)``."""
+        """Kalman filter over ``y_1..y_T``, shape ``(T, p)``.
+
+        Raises:
+            ValueError: If ``observations`` is not ``(T, p)`` or (outside ``jit``) not finite.
+        """
+        p = self.H.shape[-2]
+        if observations.ndim != 2 or observations.shape[-1] != p:
+            raise ValueError(f"observations must have shape (T, {p}), got {tuple(observations.shape)}")
+        check_finite(observations, "observations")
         A, b, H, c, Q, R = self.A, self.b, self.H, self.c, self.Q, self.R
 
         def step(carry, y):
@@ -130,7 +139,12 @@ class KalmanOracle:
         return FilterResult(means=means, covs=covs, predicted_means=pm, predicted_covs=pc, log_evidence=log_ev)
 
     def smooth(self, observations: Array) -> SmootherResult:
-        """Rauch-Tung-Striebel smoother over ``y_1..y_T``, shape ``(T, p)``."""
+        """Rauch-Tung-Striebel smoother over ``y_1..y_T``, shape ``(T, p)``.
+
+        Needs invertible predicted covariances. With no model error and a known
+        (or degenerate) initial state they are singular; outside ``jit`` this
+        raises instead of returning NaN.
+        """
         f = self.filter(observations)
         A = self.A
 
@@ -144,7 +158,11 @@ class KalmanOracle:
 
         inputs = (f.means[:-1], f.covs[:-1], f.predicted_means[1:], f.predicted_covs[1:])
         _, (means, covs) = jax.lax.scan(step, (f.means[-1], f.covs[-1]), inputs, reverse=True)
-        return SmootherResult(
+        result = SmootherResult(
             means=jnp.concatenate([means, f.means[-1:]]),
             covs=jnp.concatenate([covs, f.covs[-1:]]),
         )
+        if is_concrete(result.covs) and not bool(jnp.all(jnp.isfinite(result.covs))):
+            raise ValueError("smoother failed: a predicted covariance is singular (no model error and a "
+                             "degenerate initial covariance?); add model error or initial uncertainty")
+        return result

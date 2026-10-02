@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from flax import struct
 from jax import Array
 
-from jax_da._validation import check_event_shape, placeholder_dims
+from jax_da._validation import check_event_shape, check_finite, placeholder_dims
 from jax_da.geometry import Unstructured
 from jax_da.protocols import ConditionalLaw, Geometry, Law
 
@@ -53,6 +53,14 @@ class StateSpaceModel:
     geometry: Geometry | None = struct.field(pytree_node=False, default=None)
 
     def __post_init__(self):
+        if hasattr(self.initial, "in_dim"):
+            raise ValueError("initial must be an unconditional law (dim, sample(key, shape), log_prob(x)), "
+                             f"got the conditional law {type(self.initial).__name__}")
+        for name in ("transition", "observation"):
+            law = getattr(self, name)
+            if not isinstance(law, ConditionalLaw):
+                raise ValueError(f"{name} must be a conditional law with in_dim, dim, sample(key, x), "
+                                 f"log_prob(out, x), and mean(x); got {type(law).__name__}")
         if placeholder_dims(self.initial, self.transition, self.observation):
             return
         D = self.transition.dim
@@ -120,9 +128,12 @@ class StateSpaceModel:
         Returns:
             ``Trajectory`` with ``states`` ``(T, D)`` and ``observations`` ``(T, p)``.
         """
+        if not isinstance(n_steps, int) or n_steps < 1:
+            raise ValueError(f"n_steps must be a positive integer, got {n_steps!r}")
         k_init, k_steps = jax.random.split(key)
         x0 = self.sample_initial(k_init) if x0 is None else jnp.asarray(x0)
         check_event_shape(x0, (self.state_dim,), "x0")
+        check_finite(x0, "x0")
         step_keys = jax.random.split(k_steps, (n_steps, 2))
 
         def step(x, keys):

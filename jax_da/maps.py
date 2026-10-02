@@ -16,7 +16,7 @@ import numpy as np
 from flax import struct
 from jax import Array
 
-from jax_da._validation import check_event_shape
+from jax_da._validation import check_event_shape, check_finite, is_numeric, per_component, require_map
 
 
 @struct.dataclass
@@ -30,6 +30,15 @@ class Linear:
 
     matrix: Array
     offset: Array = 0.0
+
+    def __post_init__(self):
+        if not is_numeric(self.matrix):
+            return
+        if np.ndim(self.matrix) < 2:
+            raise ValueError(f"matrix must have shape (..., dim, in_dim), got shape {np.shape(self.matrix)}")
+        check_finite(self.matrix, "matrix")
+        per_component(self, "offset", self.dim)
+        check_finite(self.offset, "offset")
 
     @classmethod
     def damped_rotation(cls, dim: int, decay: float = 0.98, angle: float = 0.2) -> "Linear":
@@ -86,12 +95,19 @@ class Selector:
         idx = np.asarray(self.indices)
         if idx.ndim != 1 or idx.size == 0:
             raise ValueError(f"indices must be a nonempty 1D sequence, got {self.indices}")
+        if not all(isinstance(i, (int, np.integer)) and not isinstance(i, bool) for i in self.indices):
+            raise ValueError(f"indices must be integers, got {self.indices}")
         if idx.min() < 0 or idx.max() >= self.in_dim:
             raise ValueError(f"indices must lie in [0, {self.in_dim}), got {self.indices}")
+        if len(set(self.indices)) != len(self.indices):
+            raise ValueError(f"indices must be distinct, got {self.indices}; for repeated "
+                             f"measurements of a component use Linear with repeated rows")
 
     @classmethod
     def every(cls, in_dim: int, stride: int, offset: int = 0) -> "Selector":
         """Select components ``offset, offset + stride, ...``."""
+        if stride < 1:
+            raise ValueError(f"stride must be a positive integer, got {stride}")
         return cls(in_dim=in_dim, indices=tuple(range(offset, in_dim, stride)))
 
     @property
@@ -130,6 +146,7 @@ class Elementwise:
     degree: int = struct.field(pytree_node=False, default=3)
 
     def __post_init__(self):
+        require_map(self.base, "Elementwise base")
         if self.kind not in ELEMENTWISE_KINDS:
             raise ValueError(f"kind must be one of {ELEMENTWISE_KINDS}, got {self.kind!r}")
         if self.kind == "polynomial" and (self.degree < 1 or self.degree % 2 == 0):

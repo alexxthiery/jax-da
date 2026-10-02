@@ -77,6 +77,8 @@ def linear_gaussian_full(state_dim: int = 6, obs_dim: int = 3, spectral_radius: 
     the model is identical across JAX versions and devices. Exact answers via
     ``KalmanOracle``.
     """
+    if state_dim < 1 or obs_dim < 1:
+        raise ValueError(f"state_dim and obs_dim must be positive, got {state_dim} and {obs_dim}")
     rng = np.random.default_rng(seed)
     a = rng.standard_normal((state_dim, state_dim))
     a *= spectral_radius / np.max(np.abs(np.linalg.eigvals(a)))
@@ -138,6 +140,8 @@ def advection_diffusion(grid_shape: tuple[int, ...] = (256,), dt: float = 1.0, v
         raise ValueError(f"grid_shape must be (n,) or (height, width), got {grid_shape}")
     if damping <= 0:
         raise ValueError(f"damping must be positive for a stationary climatology, got {damping}")
+    if obs_every < 1:
+        raise ValueError(f"obs_every must be a positive integer, got {obs_every}")
     velocity = np.broadcast_to(np.asarray(velocity, dtype=float), (len(shape),))
     k = np.meshgrid(*[2 * np.pi * np.fft.fftfreq(n) for n in shape], indexing="ij")
     k_squared = sum(ki ** 2 for ki in k)
@@ -237,6 +241,8 @@ def stochastic_volatility(dim: int = 1, phi: float = 0.98, sigma: float = 0.15, 
     """
     if not abs(phi) < 1:
         raise ValueError(f"|phi| must be < 1 for a stationary initial law, got {phi}")
+    if not (sigma > 0 and beta > 0):
+        raise ValueError(f"sigma and beta must be positive, got sigma={sigma}, beta={beta}")
     eye = jnp.eye(dim)
     return StateSpaceModel(
         initial=Gaussian.isotropic(dim, sigma / np.sqrt(1 - phi ** 2), loc=mu),

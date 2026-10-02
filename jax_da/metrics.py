@@ -13,12 +13,16 @@ import jax.numpy as jnp
 from jax import Array
 from jax.scipy.stats import norm
 
+from jax_da._validation import check_finite, check_positive
+
 
 def _check(ensemble: Array, truth: Array) -> None:
     if ensemble.ndim < 2 or ensemble.shape[:-2] + ensemble.shape[-1:] != truth.shape:
         raise ValueError(
             f"Expected ensemble (..., N, D) and truth (..., D) with matching ... and D, "
             f"got {tuple(ensemble.shape)} and {tuple(truth.shape)}.")
+    check_finite(ensemble, "ensemble")
+    check_finite(truth, "truth")
 
 
 def rmse(ensemble: Array, truth: Array) -> Array:
@@ -31,6 +35,7 @@ def spread(ensemble: Array) -> Array:
     """``sqrt(mean_d Var_n x)`` with the unbiased (``ddof=1``) variance, shape ``(...)``."""
     if ensemble.ndim < 2 or ensemble.shape[-2] < 2:
         raise ValueError(f"Expected ensemble (..., N, D) with N >= 2, got {tuple(ensemble.shape)}.")
+    check_finite(ensemble, "ensemble")
     return jnp.sqrt(jnp.mean(jnp.var(ensemble, axis=-2, ddof=1), axis=-1))
 
 
@@ -62,6 +67,12 @@ def crps_gaussian(mean: Array, std: Array, truth: Array) -> Array:
     ``CRPS(N(mu, s^2), y) = s [z (2 Phi(z) - 1) + 2 phi(z) - 1/sqrt(pi)]`` with
     ``z = (y - mu) / s`` (Gneiting et al. 2005).
     """
+    if not (jnp.shape(mean) == jnp.shape(std) == jnp.shape(truth)):
+        raise ValueError(f"mean, std, and truth must have the same shape, got "
+                         f"{jnp.shape(mean)}, {jnp.shape(std)}, {jnp.shape(truth)}")
+    check_positive(std, "std")
+    check_finite(mean, "mean")
+    check_finite(truth, "truth")
     z = (truth - mean) / std
     per = std * (z * (2 * norm.cdf(z) - 1) + 2 * norm.pdf(z) - 1 / math.sqrt(math.pi))
     return jnp.mean(per, axis=-1)

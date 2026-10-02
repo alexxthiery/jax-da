@@ -57,7 +57,8 @@ The package never contains an assimilation algorithm; algorithms belong in `exam
 
 - One object per file in `jax_da/dynamics/`; `jax_da/__init__.py` re-exports the public API.
 - Objects are `flax.struct.dataclass`. Numeric parameters are pytree children; sizes, modes, and `dt` loop counts are `struct.field(pytree_node=False)`.
-- Validate numeric parameters in `__post_init__` behind `is_concrete`, and dimension checks behind `placeholder_dims`; JAX rebuilds pytrees with `None`, integer, or `object()` leaves. Read dimensions from trailing array axes (`shape[-1]`), never leading ones.
+- Fail early and loud: every mistake raises `ValueError` with a message naming it; never return NaN or a plausible wrong answer. Shapes are checked always; values (`check_positive`, `check_finite`, symmetry, counts) when `is_concrete`, that is outside `jit`. Add each new check to `tests/test_fail_loud.py` with a `match=` on its message.
+- Validation in `__post_init__` must survive JAX rebuilds: skip non-numeric leaves (`is_numeric`), guard dimension checks with `placeholder_dims`, read dimensions from trailing axes (`shape[-1]`), and normalize per-component parameters with `per_component`.
 - Every public method on states starts with `check_event_shape` (`jax_da/_validation.py`); never reshape or broadcast a malformed input.
 - States are flat `(..., D)`; leading axes are batch axes; structured layouts are described by `geometry`, not by the array shape.
 - Explicit PRNG keys; no global random state.

@@ -38,6 +38,8 @@ class Lorenz96:
     def __post_init__(self):
         if self.dim < 4:
             raise ValueError(f"Lorenz-96 needs dim >= 4, got {self.dim}")
+        if self.substeps < 1:
+            raise ValueError(f"substeps must be a positive integer, got {self.substeps}")
 
     @property
     def geometry(self) -> Ring:

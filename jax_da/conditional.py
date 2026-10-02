@@ -14,11 +14,12 @@ members works as a conditional law; ``docs/laws.md`` has a template.
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import struct
 from jax import Array
 from jax.scipy.special import gammaln
 
-from jax_da._validation import check_event_shape, placeholder_dims
+from jax_da._validation import check_event_shape, is_concrete, placeholder_dims, require_map
 
 
 @struct.dataclass
@@ -37,6 +38,7 @@ class Additive:
     noise: object = None
 
     def __post_init__(self):
+        require_map(self.map, "Additive map")
         if self.noise is not None and not placeholder_dims(self.map, self.noise) and self.noise.dim != self.map.dim:
             raise ValueError(f"noise.dim={self.noise.dim} != map.dim={self.map.dim}")
 
@@ -83,6 +85,7 @@ class Multiplicative:
     noise: object
 
     def __post_init__(self):
+        require_map(self.log_scale, "Multiplicative log_scale")
         if not placeholder_dims(self.log_scale, self.noise) and self.noise.dim != self.log_scale.dim:
             raise ValueError(f"noise.dim={self.noise.dim} != log_scale.dim={self.log_scale.dim}")
 
@@ -120,6 +123,9 @@ class Poisson:
 
     log_rate: object
 
+    def __post_init__(self):
+        require_map(self.log_rate, "Poisson log_rate")
+
     @property
     def in_dim(self) -> int:
         return self.log_rate.in_dim
@@ -137,5 +143,9 @@ class Poisson:
 
     def log_prob(self, out: Array, x: Array) -> Array:
         check_event_shape(out, (self.dim,), "out")
+        if is_concrete(out):
+            counts = np.asarray(out)
+            if not (np.all(counts >= 0) and np.all(counts == np.round(counts))):
+                raise ValueError("Poisson counts must be nonnegative integers")
         log_rate = self.log_rate(x)
         return (out * log_rate - jnp.exp(log_rate) - gammaln(out + 1.0)).sum(-1)

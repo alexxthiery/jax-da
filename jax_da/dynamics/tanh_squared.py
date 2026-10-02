@@ -1,10 +1,11 @@
 """Identifiable nonlinear autoregression used with Poisson counts (flowsmc benchmark)."""
 
 import jax.numpy as jnp
+import numpy as np
 from flax import struct
 from jax import Array
 
-from jax_da._validation import check_event_shape
+from jax_da._validation import check_event_shape, check_finite, is_numeric
 from jax_da.geometry import Unstructured
 
 
@@ -28,6 +29,11 @@ class TanhSquared:
     rho: float = 0.55
     alpha: float = 0.55
     offset: Array = 0.25
+
+    def __post_init__(self):
+        if is_numeric(self.B) and (np.ndim(self.B) < 2 or np.shape(self.B)[-1] != np.shape(self.B)[-2]):
+            raise ValueError(f"B must be square, got shape {np.shape(self.B)}")
+        check_finite(self.B, "B")
 
     @property
     def dim(self) -> int:
