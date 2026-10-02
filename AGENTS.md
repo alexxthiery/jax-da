@@ -24,6 +24,28 @@ python -m pytest -m pde
 pip install -e '.[dev,pde]'
 ```
 
+## Architecture
+
+```text
+jax_da/
+  __init__.py           re-exports the public API
+  ssm.py                StateSpaceModel, Trajectory
+  dynamics/             one file per system: linear, lorenz63, lorenz96, lorenz96_two_scale,
+                        ks, kolmogorov; _integrate (RK4, spin-up), _exponax (cached steppers)
+  noise.py              Gaussian, StudentT, Cauchy, Laplace, GaussianMixture
+  observations.py       Selector, Linear, Elementwise
+  geometry.py           Unstructured, Ring, Torus2D
+  metrics.py            ensemble scores
+  oracles.py            KalmanOracle
+  problems.py           presets
+  _validation.py        shape and parameter checks
+docs/                   design.md plus one page per object
+examples/               algorithms written against the public API (not part of the package)
+tests/                  test_interface.py (every object) plus one file per module
+```
+
+The package never contains an assimilation algorithm; algorithms belong in `examples/` or in consuming projects.
+
 ## Code conventions
 
 - One object per file in `jax_da/dynamics/`; `jax_da/__init__.py` re-exports the public API.

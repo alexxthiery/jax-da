@@ -60,7 +60,7 @@ A model-error study builds two SSMs (truth and forecast) with different paramete
 
 Each is usable on its own.
 
-- **Dynamics** (`jax_da.dynamics`): `dim`, `dt`, `geometry`, `flow(x)`, `initial_condition(key)`, `spinup(x, n_steps)`.
+- **Dynamics** (`jax_da.dynamics`): `dim`, `geometry`, `flow(x)` over one interval; the ODE and PDE models also have `dt`, `initial_condition(key)`, and `spinup(x, n_steps)`.
   `LinearGaussian`, `Lorenz63`, `Lorenz96`, `Lorenz96TwoScale`, `KuramotoSivashinsky` and `KolmogorovFlow` (the last two need the `pde` extra, Exponax).
 - **Noise laws** (`jax_da.noise`): `dim`, `sample(key, shape)`, `log_prob(e)`, `cov()` (raises `NotImplementedError` when the covariance does not exist).
   `Gaussian` (scalar, diagonal, or full covariance), `StudentT`, `Laplace`, `Cauchy`, `GaussianMixture`.
