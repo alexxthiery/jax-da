@@ -8,6 +8,7 @@ Chaotic presets place `initial_mean` on the attractor by spinning up from `attra
 |--------|-------|--------------|--------|
 | `linear_gaussian()` | damped rotations, $D = 4$, model error std 0.3 | every 2nd component, std 0.5 | oracle test bed |
 | `linear_gaussian_full()` | dense $A$ with spectral radius 0.95, $D = 6$, full $Q$ (mean variance $0.3^2$), $x_0 \sim N(0, P_0)$ with full $P_0$ | dense $H$, $p = 3$, full $R$ (mean variance $0.5^2$) | general oracle test bed |
+| `advection_diffusion()` | exact advection-diffusion with damping on a ring (256 cells) or torus, correlated model error, stationary $x_0$ | every 8th cell per axis, std 0.5 | high-dimensional oracle test bed; [advection_diffusion.md](advection_diffusion.md) |
 | `lorenz63()` | Lorenz-63, `dt = 0.25` | all components, $R = 2I$ | Sakov et al. (2012) |
 | `lorenz96()` | Lorenz-96, $D = 40$, $F = 8$, `dt = 0.05` | all sites, $R = I$; `obs_every` thins | Sakov and Oke (2008) |
 | `lorenz96_two_scale()` | two-scale Lorenz-96, $K = 8$, $J = 32$, $F = 20$ | slow variables, std 1 | Wilks (2005) |

@@ -17,6 +17,7 @@ from jax_da.dynamics.linear import LinearDynamics
 from jax_da.dynamics.lorenz63 import Lorenz63
 from jax_da.dynamics.lorenz96 import Lorenz96
 from jax_da.dynamics.lorenz96_two_scale import Lorenz96TwoScale
+from jax_da.geometry import Ring, Torus2D
 from jax_da.noise import Gaussian
 from jax_da.observations import Linear, Selector
 from jax_da.ssm import StateSpaceModel
@@ -91,6 +92,82 @@ def linear_gaussian_full(state_dim: int = 6, obs_dim: int = 3, spectral_radius: 
         initial_mean=jnp.zeros(state_dim),
         initial_noise=Gaussian.full(jnp.asarray(p0)),
         model_error=Gaussian.full(jnp.asarray(q)),
+    )
+
+
+def _fourier_operator(multiplier: np.ndarray) -> np.ndarray:
+    """Dense real matrix of the map ``x -> ifftn(multiplier * fftn(x))`` on a periodic grid.
+
+    ``multiplier`` has the grid shape and must be Hermitian, ``m(-k) = conj(m(k))``,
+    so the map is real. Column ``j`` is the image of the ``j``-th row-major basis field.
+    """
+    shape = multiplier.shape
+    dim = int(np.prod(shape))
+    axes = tuple(range(1, len(shape) + 1))
+    basis = np.eye(dim).reshape((dim,) + shape)
+    images = np.fft.ifftn(multiplier * np.fft.fftn(basis, axes=axes), axes=axes)
+    if np.abs(images.imag).max() > 1e-10 * np.abs(images.real).max():
+        raise ValueError("Fourier multiplier is not Hermitian; the operator would be complex")
+    return images.real.reshape(dim, dim).T
+
+
+def advection_diffusion(grid_shape: tuple[int, ...] = (256,), dt: float = 1.0, velocity=1.0,
+                        diffusivity: float = 0.1, damping: float = 0.02, noise_length: float = 10.0,
+                        model_error_std: float = 0.2, obs_every: int = 8, obs_std: float = 0.5,
+                        nugget: float = 0.01) -> StateSpaceModel:
+    """Stochastic advection-diffusion on a periodic ring or torus, in statistical equilibrium. Exact via ``KalmanOracle``.
+
+        du/dt + c . grad u = kappa Laplacian(u) - lambda u + noise
+
+    over one interval ``dt`` is applied exactly in Fourier space: mode ``k`` is
+    multiplied by ``exp(-(kappa |k|^2 + lambda) dt) exp(-i c . k dt)``, so there is
+    no discretization error and fractional-cell shifts are exact. Lengths are in
+    grid cells. The model error is Gaussian, translation invariant, with a
+    squared-exponential correlation of length ``noise_length`` plus a white
+    ``nugget`` fraction that keeps ``Q`` well conditioned, and marginal std
+    ``model_error_std``. ``x_0`` is drawn from the stationary law ``N(0, Sigma)``,
+    ``Sigma = A Sigma A^T + Q``, whose spectrum is ``q_k / (1 - |a_k|^2)``; this
+    needs ``damping > 0``. Every ``obs_every``-th grid point along each axis is
+    observed with noise std ``obs_std``.
+
+    Args:
+        grid_shape: ``(n,)`` for a ring or ``(height, width)`` for a torus.
+        velocity: Advection speed in cells per time unit, scalar or one per axis.
+
+    Returns:
+        A linear-Gaussian ``StateSpaceModel`` with ``Ring`` or ``Torus2D`` geometry.
+    """
+    shape = tuple(int(n) for n in grid_shape)
+    if len(shape) not in (1, 2):
+        raise ValueError(f"grid_shape must be (n,) or (height, width), got {grid_shape}")
+    if damping <= 0:
+        raise ValueError(f"damping must be positive for a stationary climatology, got {damping}")
+    velocity = np.broadcast_to(np.asarray(velocity, dtype=float), (len(shape),))
+    k = np.meshgrid(*[2 * np.pi * np.fft.fftfreq(n) for n in shape], indexing="ij")
+    k_squared = sum(ki ** 2 for ki in k)
+    # Translation by c dt along each axis. On the grid the Nyquist mode cos(pi i) has no sine
+    # partner, so translation acts on it as the real factor cos(pi c dt): exact for whole-cell shifts.
+    translation = np.ones(shape, dtype=complex)
+    for c, ki in zip(velocity, k):
+        nyquist = np.isclose(np.abs(ki), np.pi)
+        translation *= np.where(nyquist, np.cos(c * ki * dt), np.exp(-1j * c * ki * dt))
+    a = np.exp(-(diffusivity * k_squared + damping) * dt) * translation
+    q = np.exp(-0.5 * k_squared * noise_length ** 2)
+    q = model_error_std ** 2 * ((1 - nugget) * q / q.mean() + nugget)  # spectrum mean = marginal variance
+    sigma = q / (1 - np.abs(a) ** 2)
+
+    dim = int(np.prod(shape))
+    layout = Ring(shape[0]) if len(shape) == 1 else Torus2D(*shape)
+    observed = np.zeros(shape, dtype=bool)
+    observed[tuple(slice(0, None, obs_every) for _ in shape)] = True
+    indices = tuple(int(i) for i in np.flatnonzero(observed))  # row-major flat indices
+    return StateSpaceModel(
+        dynamics=LinearDynamics(jnp.asarray(_fourier_operator(a)), layout=layout),
+        obs_operator=Selector(dim, indices),
+        obs_noise=Gaussian.isotropic(len(indices), obs_std),
+        initial_mean=jnp.zeros(dim),
+        initial_noise=Gaussian.full(jnp.asarray(_fourier_operator(sigma))),
+        model_error=Gaussian.full(jnp.asarray(_fourier_operator(q))),
     )
 
 

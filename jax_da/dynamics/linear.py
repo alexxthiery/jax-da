@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from flax import struct
 from jax import Array
 
-from jax_da._validation import check_event_shape
+from jax_da._validation import check_event_shape, is_concrete
 from jax_da.geometry import Unstructured
 
 
@@ -19,9 +19,16 @@ class LinearDynamics:
 
     Attributes:
         matrix: ``A``, shape ``(D, D)``.
+        layout: Spatial geometry of the state (``Ring``, ``Torus2D``), or None for
+            ``Unstructured`` (static).
     """
 
     matrix: Array
+    layout: object = struct.field(pytree_node=False, default=None)
+
+    def __post_init__(self):
+        if self.layout is not None and is_concrete(self.matrix) and self.layout.dim != self.dim:
+            raise ValueError(f"layout.dim={self.layout.dim} != matrix dimension {self.dim}")
 
     @classmethod
     def damped_rotation(cls, dim: int, decay: float = 0.98, angle: float = 0.2) -> "LinearDynamics":
@@ -39,8 +46,8 @@ class LinearDynamics:
         return int(self.matrix.shape[0])
 
     @property
-    def geometry(self) -> Unstructured:
-        return Unstructured(self.dim)
+    def geometry(self):
+        return Unstructured(self.dim) if self.layout is None else self.layout
 
     def flow(self, x: Array) -> Array:
         """``A x``, shape ``(..., D) -> (..., D)``."""

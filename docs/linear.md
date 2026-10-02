@@ -8,5 +8,6 @@ With Gaussian initial, model, and observation noise and a linear observation ope
 | Field | Kind | Meaning |
 |-------|------|---------|
 | `matrix` | numeric | $A$, shape `(D, D)` |
+| `layout` | static | geometry (`Ring`, `Torus2D`), or None for `Unstructured` |
 
-Presets: `jax_da.problems.linear_gaussian()` (damped rotations, selector observations, isotropic noise) and `jax_da.problems.linear_gaussian_full()` (dense $A$ and $H$, full $Q$, $R$, $P_0$).
+Presets: `jax_da.problems.linear_gaussian()` (damped rotations, selector observations, isotropic noise) `jax_da.problems.linear_gaussian_full()` (dense $A$ and $H$, full $Q$, $R$, $P_0$), and `jax_da.problems.advection_diffusion()` (spatially structured, high-dimensional).

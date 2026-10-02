@@ -88,7 +88,7 @@ Every dynamics has `dim`, `geometry`, and `flow(x)` over one interval; the chaot
 
 ## Presets
 
-`jax_da.problems` returns ready-made models with settings from the literature: `linear_gaussian`, `linear_gaussian_full` (dense $A$ and $H$, full $Q$, $R$, $P_0$), `lorenz63`, `lorenz96`, `lorenz96_two_scale`, `kuramoto_sivashinsky`, `kolmogorov`.
+`jax_da.problems` returns ready-made models with settings from the literature: `linear_gaussian`, `linear_gaussian_full` (dense $A$ and $H$, full $Q$, $R$, $P_0$), `advection_diffusion` (high-dimensional, spatially structured, exact; [docs/advection_diffusion.md](docs/advection_diffusion.md)), `lorenz63`, `lorenz96`, `lorenz96_two_scale`, `kuramoto_sivashinsky`, `kolmogorov`.
 See [docs/problems.md](docs/problems.md).
 
 ## Scoring
