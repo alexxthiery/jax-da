@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jax-da"
+version = "0.1.0"
+description = "State-space models, scoring, and oracles for testing data assimilation algorithms in JAX"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "jax>=0.4.30",
+    "jaxlib>=0.4.30",
+    "flax>=0.8.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+pde = ["exponax>=0.2"]
+dev = ["pytest>=7.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["jax_da"]
+
+[tool.pytest.ini_options]
+# Lets `pytest` import jax_da from a source checkout without an install.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-m 'not pde'"
+markers = [
+    "pde: needs the optional Exponax dependency (KS, Kolmogorov); run with -m pde",
+]
