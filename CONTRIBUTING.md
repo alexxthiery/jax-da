@@ -2,7 +2,7 @@
 
 ## Adding a dynamics
 
-1. Create `jax_da/dynamics/<name>.py` with a `flax.struct.dataclass`; `lorenz96.py` is the template.
+1. Create `jax_da/dynamics/<name>.py` with a `flax.struct.dataclass` satisfying `jax_da.protocols.Dynamics`; `lorenz96.py` is the template.
    - Fields: numeric parameters are pytree children (they can be swept with `vmap` and differentiated); sizes, `substeps`, and anything that sets a loop count or a solver are `struct.field(pytree_node=False)`.
    - Members: `dim` and `geometry` properties, `flow(x)` over one interval starting with `check_event_shape(x, (self.dim,))`, and for chaotic systems `initial_condition(key)` and `spinup(x, n_steps)`.
    - `flow` must accept any leading batch axes.
@@ -25,3 +25,4 @@ python -m pytest -m pde     # Exponax-backed models
 
 Tests compare against independent references, never against stored outputs of the code itself.
 Monte Carlo checks set their tolerance from the standard error they expect.
+After a behavior change, run `python tools/mutate.py`; every mutant must be killed, and new behavior gets a new mutant.

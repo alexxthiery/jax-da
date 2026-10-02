@@ -13,6 +13,7 @@ from flax import struct
 from jax import Array
 
 from jax_da._validation import check_event_shape
+from jax_da.protocols import Dynamics, NoiseLaw, ObservationOperator
 
 
 @struct.dataclass
@@ -34,21 +35,25 @@ class Trajectory:
 class StateSpaceModel:
     """A data assimilation benchmark model.
 
+    Each component is any object satisfying the matching protocol in
+    ``jax_da.protocols``, so user-written dynamics, operators, and noise
+    laws plug in without subclassing.
+
     Attributes:
-        dynamics: Object with ``dim``, ``geometry``, and ``flow(x)`` over one interval.
-        obs_operator: Object with ``in_dim``, ``dim``, and ``apply(x)``.
-        obs_noise: Noise law of dimension ``obs_operator.dim``.
+        dynamics: ``Dynamics``: ``dim``, ``geometry``, ``flow(x)`` over one interval.
+        obs_operator: ``ObservationOperator``: ``in_dim``, ``dim``, ``apply(x)``.
+        obs_noise: ``NoiseLaw`` of dimension ``obs_operator.dim``.
         initial_mean: ``m_0``, shape ``(D,)``.
-        initial_noise: Noise law of dimension ``D``, or None for a known ``x_0 = m_0``.
-        model_error: Noise law of dimension ``D``, or None for deterministic dynamics.
+        initial_noise: ``NoiseLaw`` of dimension ``D``, or None for a known ``x_0 = m_0``.
+        model_error: ``NoiseLaw`` of dimension ``D``, or None for deterministic dynamics.
     """
 
-    dynamics: object
-    obs_operator: object
-    obs_noise: object
+    dynamics: Dynamics
+    obs_operator: ObservationOperator
+    obs_noise: NoiseLaw
     initial_mean: Array
-    initial_noise: object = None
-    model_error: object = None
+    initial_noise: NoiseLaw | None = None
+    model_error: NoiseLaw | None = None
 
     def __post_init__(self):
         D, p = self.dynamics.dim, self.obs_operator.dim

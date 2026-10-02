@@ -17,7 +17,7 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 from jax import Array
-from jax.scipy.special import gammaln, logsumexp
+from jax.scipy.special import gammaln
 
 from jax_da._validation import check_event_shape, is_concrete
 
@@ -246,10 +246,8 @@ class GaussianMixture:
         def normal(s):
             return -0.5 * (e / s) ** 2 - jnp.log(s) - 0.5 * math.log(2 * math.pi)
 
-        per = logsumexp(
-            jnp.stack([normal(std), normal(self.outlier_scale * std)]),
-            b=jnp.array([1 - self.outlier_prob, self.outlier_prob]).reshape((2,) + (1,) * e.ndim),
-            axis=0)
+        p = self.outlier_prob
+        per = jnp.logaddexp(jnp.log1p(-p) + normal(std), jnp.log(p) + normal(self.outlier_scale * std))
         return per.sum(-1)
 
     def variance(self) -> Array:

@@ -29,6 +29,8 @@ def rmse(ensemble: Array, truth: Array) -> Array:
 
 def spread(ensemble: Array) -> Array:
     """``sqrt(mean_d Var_n x)`` with the unbiased (``ddof=1``) variance, shape ``(...)``."""
+    if ensemble.ndim < 2 or ensemble.shape[-2] < 2:
+        raise ValueError(f"Expected ensemble (..., N, D) with N >= 2, got {tuple(ensemble.shape)}.")
     return jnp.sqrt(jnp.mean(jnp.var(ensemble, axis=-2, ddof=1), axis=-1))
 
 

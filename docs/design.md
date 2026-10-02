@@ -1,82 +1,44 @@
 # jax-da design
 
-jax-da is a library of state-space models (SSMs) for testing data assimilation (DA) algorithms in JAX.
+jax-da is a library of state-space models for testing data assimilation algorithms in JAX.
 It simulates data, samples and evaluates transition and observation densities, scores ensembles against the truth, and gives exact answers where they exist.
-It contains no assimilation algorithm: projects write their own filters, smoothers, and loops against these objects.
-
-The library is to data assimilation what [jax-pdf](https://github.com/alexxthiery/jax-pdf) is to sampling: shared benchmark models behind one small interface.
+It contains no assimilation algorithm.
+This page records scope and the decisions behind the interface; the interface itself is in the [README](../README.md), and the component contracts are in `jax_da/protocols.py`.
 
 ## Scope
 
-In:
+In: state-space models and their building blocks (dynamics, observation operators, noise laws, geometry), trajectory simulation, presets, ensemble scores, and the Kalman oracle.
 
-- SSMs: dynamics, model-error laws, observation operators, observation-noise laws.
-- Trajectory simulation from a key, on the fly; no files.
-- Named presets with settings from the literature.
-- Scoring functions for ensembles against the truth.
-- `KalmanOracle`: exact filtering and smoothing for linear-Gaussian SSMs.
-- Geometry metadata (ring, 2D torus) and distances, for localized methods.
+Out: assimilation algorithms (including baselines), a cycling driver or method protocol, training, plotting, experiment management, and disk caching.
+Examples of algorithms live in `examples/`, outside the package.
 
-Out:
+## Decisions
 
-- Assimilation algorithms, including baselines. Examples live in `examples/`.
-- A cycling driver or a method protocol. Each project owns its loop.
-- Training, plotting, experiment management, disk caching.
+**No driver.** An earlier draft had a cycling driver and a method protocol.
+Any such protocol constrains which algorithms fit (lookahead filters, smoothers, variational windows, learned forecasters), while a library of models constrains none of them.
+Each project writes its own loop, which is a few lines of `lax.scan` (see `examples/`).
 
-## The model
+**One step is one assimilation interval.** Every model's `flow` covers its `dt`, and observations exist at every step.
+Sparser observation in time means a larger `dt`, not a masked observation sequence.
+This keeps `simulate` and every algorithm loop free of bookkeeping.
 
-One time step is one assimilation interval:
+**Explicit initial law.** $x_0 = m_0 + \xi$ with a noise law (or none), so $p(x_0)$ has a density whenever a filter or sampler needs one.
+Chaotic presets put $m_0$ on the attractor by a deterministic spin-up from `attractor_seed`.
 
-$$
-x_{t+1} = \mathcal{M}(x_t) + \eta_t, \qquad y_t = h(x_t) + \varepsilon_t,
-$$
+**Point masses raise.** Without model error the transition is deterministic and `log_transition_density` raises instead of returning a fake value; the same holds for a known $x_0$.
 
-with $\mathcal{M}$ the deterministic flow over the model's `dt`, $\eta_t$ the model error (possibly absent), and $\varepsilon_t$ the observation noise.
-Observations exist at every step; sparser observation in time means a larger `dt`.
+**Flat states, structural typing.** States are always `(..., D)`; layout lives in `geometry`, not in the array shape, so every algorithm sees one convention.
+Components are duck-typed against `jax_da.protocols`, so user-written dynamics, operators, and noise laws plug in without subclassing.
 
-## Interface
+**Static PDE parameters.** Kuramoto-Sivashinsky and Kolmogorov parameters define an Exponax spectral stepper, so they are static fields and the stepper is cached per configuration.
+The cache is built under `jax.ensure_compile_time_eval`, so a first build inside `jit` cannot leak tracers.
 
-All objects are `flax.struct.dataclass` pytrees, as in jax-pdf: numeric parameters are pytree children (so they can be swept with `vmap` and differentiated), sizes and modes are static fields.
-States are flat, shape `(..., D)`, with any leading batch axes; an ensemble is a batch axis.
-Every method checks the trailing shape and raises `ValueError` on a mismatch.
-
-### `StateSpaceModel`
-
-| Member | Shapes | Meaning |
-|--------|--------|---------|
-| `state_dim`, `obs_dim`, `geometry` | static | dimensions; `Unstructured`, `Ring(n)`, or `Torus2D(height, width)` (row-major flattening) |
-| `sample_initial(key, shape=())` | `shape + (D,)` | draws from the initial law |
-| `mean_transition(x)` | `(..., D) -> (..., D)` | $\mathcal{M}(x)$ |
-| `sample_transition(key, x)` | `(..., D) -> (..., D)` | draw of $x_{t+1} \mid x_t$ |
-| `log_transition_density(x_next, x)` | `-> (...)` | $\log p(x_{t+1} \mid x_t)$; raises `ValueError` when the model has no model error (the transition is a point mass) |
-| `observe_mean(x)` | `(..., D) -> (..., p)` | $h(x)$ |
-| `sample_observation(key, x)` | `(..., D) -> (..., p)` | draw of $y_t \mid x_t$ |
-| `log_likelihood(y, x)` | `-> (...)` | $\log p(y_t \mid x_t)$ |
-| `simulate(key, n_steps, x0=None)` | `(T, D), (T, p)` | truth trajectory and observations |
-
-A model-error study builds two SSMs (truth and forecast) with different parameters, for example with `dataclasses.replace`.
-
-### Building blocks
-
-Each is usable on its own.
-
-- **Dynamics** (`jax_da.dynamics`): `dim`, `geometry`, `flow(x)` over one interval; the ODE and PDE models also have `dt`, `initial_condition(key)`, and `spinup(x, n_steps)`.
-  `LinearGaussian`, `Lorenz63`, `Lorenz96`, `Lorenz96TwoScale`, `KuramotoSivashinsky` and `KolmogorovFlow` (the last two need the `pde` extra, Exponax).
-- **Noise laws** (`jax_da.noise`): `dim`, `sample(key, shape)`, `log_prob(e)`, `cov()` (raises `NotImplementedError` when the covariance does not exist).
-  `Gaussian` (scalar, diagonal, or full covariance), `StudentT`, `Laplace`, `Cauchy`, `GaussianMixture`.
-- **Observation operators** (`jax_da.observations`): `in_dim`, `dim`, `apply(x)`.
-  `Selector(indices)` exposes `indices`; `Linear(H)` exposes `matrix`; `Elementwise(base, kind)` is $g(Hx)$ with polynomial or arctan $g$.
-  For a Jacobian, use `jax.jacfwd(op.apply)`.
-
-### Extras
-
-- **Presets** (`jax_da.problems`): functions returning an SSM with documented literature settings.
-- **Metrics** (`jax_da.metrics`): RMSE, CRPS, spread, spread-skill ratio, coverage, rank histogram, energy score; pure functions of an ensemble `(..., N, D)` and a truth `(..., D)`.
-- **Oracle** (`jax_da.oracles.KalmanOracle`): filtering means and covariances, RTS smoothing, and log-evidence for linear-Gaussian SSMs.
+**Scores comparable across ensemble sizes.** `spread_skill_ratio` includes the $(N+1)/N$ factor and `crps` offers the fair estimator, so calibration and skill do not depend on $N$ by construction.
 
 ## Conventions
 
-- PRNG keys are explicit; `simulate` splits all keys before its `lax.scan`, so a trajectory depends only on the key.
-- float32 by default; enable `jax_enable_x64` for float64 (the oracle tests do).
-- Methods trace under `jit`, `vmap`, and `grad`.
-- Tests check semantics against independent references (closed forms, quadrature, Monte Carlo, the oracle), not snapshots.
+- `flax.struct.dataclass` objects: numeric parameters are pytree children (sweep with `vmap`, differentiate with `grad`); sizes, modes, and loop counts are static.
+- Explicit PRNG keys; `simulate` splits all keys before its `lax.scan`, so a trajectory depends only on its key.
+- float32 by default; tests enable float64 for reference comparisons.
+- Trailing shapes are checked and raise `ValueError`; inputs are never reshaped to make them fit.
+- Tests compare against independent references (closed forms, SciPy, quadrature, conservation laws, Monte Carlo with standard-error tolerances, brute-force conditioning), never against stored outputs.

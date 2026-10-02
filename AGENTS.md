@@ -1,7 +1,8 @@
 # AGENTS.md
 
 State-space models, scoring, and oracles for testing data assimilation algorithms in JAX.
-No assimilation algorithm lives in the package; see [docs/design.md](docs/design.md) for scope and interface.
+No assimilation algorithm lives in the package.
+Read in this order: this file, the [README](README.md) (interface table), `jax_da/protocols.py` (component contracts), [docs/design.md](docs/design.md) (scope and decisions).
 
 ## Quick reference
 
@@ -20,7 +21,10 @@ python -m pytest
 # Exponax-backed models
 python -m pytest -m pde
 
-# Optional editable install
+# Mutation check: every plausible bug in tools/mutate.py must be KILLED (about 10 minutes)
+python tools/mutate.py
+
+# Editable install (needed to run examples/ directly)
 pip install -e '.[dev,pde]'
 ```
 
@@ -29,6 +33,7 @@ pip install -e '.[dev,pde]'
 ```text
 jax_da/
   __init__.py           re-exports the public API
+  protocols.py          Dynamics, NoiseLaw, ObservationOperator, Geometry contracts
   ssm.py                StateSpaceModel, Trajectory
   dynamics/             one file per system: linear, lorenz63, lorenz96, lorenz96_two_scale,
                         ks, kolmogorov; _integrate (RK4, spin-up), _exponax (cached steppers)
@@ -42,6 +47,7 @@ jax_da/
 docs/                   design.md plus one page per object
 examples/               algorithms written against the public API (not part of the package)
 tests/                  test_interface.py (every object) plus one file per module
+tools/mutate.py         mutation check of the test suite
 ```
 
 The package never contains an assimilation algorithm; algorithms belong in `examples/` or in consuming projects.
@@ -56,3 +62,28 @@ The package never contains an assimilation algorithm; algorithms belong in `exam
 - Explicit PRNG keys; no global random state.
 - Google-style docstrings with shapes in Args/Returns; comments explain why, not what.
 - Tests compare against independent references (closed forms, quadrature, Monte Carlo, the Kalman oracle), not stored outputs.
+
+## Testing
+
+Every test protects a claim with an independent oracle; pick from what the existing tests use:
+
+| Object | Oracle used |
+|--------|-------------|
+| noise laws | SciPy log-densities, 1D quadrature, Monte Carlo moments |
+| ODE dynamics | energy budgets, fixed points, hand-computed right-hand sides, RK4 order, Lyapunov exponent |
+| PDE dynamics | conserved mean (KS), drag decay of mean vorticity (Kolmogorov), flow over `dt` equals two flows over `dt/2` |
+| `StateSpaceModel` | hand Gaussian formulas, exact noiseless alignment, residual laws |
+| `KalmanOracle` | brute-force conditioning of the joint Gaussian |
+| metrics | pairwise definitions, closed-form Gaussian CRPS, calibrated and under-dispersed synthetic ensembles |
+| end to end | `examples/` particle filter vs the oracle (statistical, over 32 runs) |
+
+Monte Carlo tolerances come from the expected standard error, not from trial and error.
+After changing behavior, run `tools/mutate.py`; add a mutant for any new behavior worth protecting.
+
+## Gotchas
+
+- `tests/conftest.py` enables float64; library defaults stay float32.
+- KS and Kolmogorov parameters are static: changing one builds a new Exponax stepper (cached per configuration).
+- `dt` of a PDE model must be a multiple of `dt_inner`.
+- `examples/` import `jax_da` as an installed package; tests add the repo root to the path via `pyproject.toml`.
+- `Selector.indices` is a static tuple, so it hashes and can drive indexing under `jit`.

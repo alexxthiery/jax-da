@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import pytest
 
 import jax_da
+from jax_da.protocols import Dynamics, Geometry, NoiseLaw, ObservationOperator
 
 DYNAMICS = {
     "LinearDynamics": lambda: jax_da.LinearDynamics.damped_rotation(5),
@@ -28,6 +29,19 @@ OPERATORS = {
 }
 
 
+def test_user_written_components_plug_in_without_subclassing():
+    class Drift:  # a minimal user dynamics: three members, no base class
+        dim = 2
+        geometry = jax_da.Unstructured(2)
+
+        def flow(self, x):
+            return 0.9 * x
+
+    assert isinstance(Drift(), Dynamics)
+    ssm = jax_da.StateSpaceModel(Drift(), jax_da.Selector(2, (0,)), jax_da.Gaussian.isotropic(1, 0.1), jnp.ones(2))
+    assert ssm.simulate(jax.random.PRNGKey(0), 3).states.shape == (3, 2)
+
+
 def dynamics_params():
     return [pytest.param(name, marks=pytest.mark.pde) if name in PDE else name for name in DYNAMICS]
 
@@ -43,6 +57,7 @@ def test_dynamics_contract(name):
     if name in PDE:
         pytest.importorskip("exponax")
     model = DYNAMICS[name]()
+    assert isinstance(model, Dynamics) and isinstance(model.geometry, Geometry)
     D = model.dim
     assert model.geometry.dim == D
     x = 0.1 * jax.random.normal(jax.random.PRNGKey(0), (2, 3, D))
@@ -57,6 +72,7 @@ def test_dynamics_contract(name):
 @pytest.mark.parametrize("name", NOISE)
 def test_noise_contract(name):
     law = NOISE[name]()
+    assert isinstance(law, NoiseLaw)
     draws = law.sample(jax.random.PRNGKey(0), (4, 2))
     assert draws.shape == (4, 2, 3)
     assert law.log_prob(draws).shape == (4, 2)
@@ -68,6 +84,7 @@ def test_noise_contract(name):
 @pytest.mark.parametrize("name", OPERATORS)
 def test_operator_contract(name):
     op = OPERATORS[name]()
+    assert isinstance(op, ObservationOperator)
     x = jax.random.normal(jax.random.PRNGKey(0), (5, op.in_dim))
     assert op.apply(x).shape == (5, op.dim)
     assert jnp.allclose(jax.jit(lambda o, v: o.apply(v))(op, x), op.apply(x))

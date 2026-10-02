@@ -10,6 +10,8 @@ The same arguments always give the same model.
 import jax
 import jax.numpy as jnp
 
+from jax_da.dynamics.kolmogorov import KolmogorovFlow
+from jax_da.dynamics.ks import KuramotoSivashinsky
 from jax_da.dynamics.linear import LinearDynamics
 from jax_da.dynamics.lorenz63 import Lorenz63
 from jax_da.dynamics.lorenz96 import Lorenz96
@@ -87,8 +89,6 @@ def kuramoto_sivashinsky(num_points: int = 128, obs_every: int = 8, dt: float = 
                          initial_std: float = 0.1, model_error_std: float = 0.0, n_spinup: int = 500,
                          attractor_seed: int = 0) -> StateSpaceModel:
     """KS on ``L = 32 pi`` with 128 points, every 8th point observed every time unit (Bach et al. 2025). Needs Exponax."""
-    from jax_da.dynamics.ks import KuramotoSivashinsky
-
     dynamics = KuramotoSivashinsky(num_points=num_points, dt=dt)
     return _chaotic(dynamics, Selector.every(num_points, obs_every), obs_std, initial_std, model_error_std,
                     n_spinup, attractor_seed)
@@ -101,8 +101,6 @@ def kolmogorov(resolution: int = 64, obs_per_side: int = 8, dt: float = 0.2, obs
 
     Spin-up at full resolution takes some seconds.
     """
-    from jax_da.dynamics.kolmogorov import KolmogorovFlow
-
     dynamics = KolmogorovFlow(resolution=resolution, dt=dt)
     side = [(k * resolution) // obs_per_side for k in range(obs_per_side)]
     indices = tuple(i * resolution + j for i in side for j in side)
