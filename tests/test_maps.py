@@ -28,6 +28,7 @@ def test_polynomial_degree_one_is_identity_and_arctan_saturates():
     np.testing.assert_allclose(Elementwise(base, "polynomial", 3)(x),
                                [0.5 * -3 * (1 + 1.5 ** 2), 0.5 * 0.5 * (1 + 0.25 ** 2)])
     assert jnp.all(jnp.abs(Elementwise(base, "arctan")(1e6 * x)) < jnp.pi / 2 + 1e-9)
+    np.testing.assert_allclose(Elementwise(base, "arctan")(x), np.arctan([-3.0, 0.5]), rtol=1e-12)
 
 
 def test_jacobian_of_nonlinear_operator_matches_finite_differences():

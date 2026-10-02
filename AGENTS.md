@@ -71,16 +71,27 @@ Every test protects a claim with an independent oracle; pick from what the exist
 
 | Object | Oracle used |
 |--------|-------------|
-| noise laws | SciPy log-densities, 1D quadrature, Monte Carlo moments |
+| laws | SciPy log-densities (with nonzero `loc`), 1D quadrature, Monte Carlo moments, finite-difference gradients |
+| conditional laws | SciPy densities of the scaled noise and of Poisson counts, sampling moments |
 | ODE dynamics | energy budgets, fixed points, hand-computed right-hand sides, RK4 order, Lyapunov exponent |
 | PDE dynamics | conserved mean (KS), drag decay of mean vorticity (Kolmogorov), flow over `dt` equals two flows over `dt/2` |
 | `StateSpaceModel` | hand Gaussian formulas, exact noiseless alignment, residual laws |
-| `KalmanOracle` | brute-force conditioning of the joint Gaussian |
+| `KalmanOracle` | brute-force conditioning of the joint Gaussian built from raw constants (Gaussian and point-mass starts); Selector equals its dense matrix |
+| presets | documented settings (matrices, networks, noise levels) checked exactly; stationarity and climatology statistics |
+| misuse | `tests/test_fail_loud.py`: one realistic mistake per case, `match=` on the message |
 | metrics | pairwise definitions, closed-form Gaussian CRPS, calibrated and under-dispersed synthetic ensembles |
 | end to end | `examples/` particle filter vs the oracle (statistical, over 32 runs) |
 
 Monte Carlo tolerances come from the expected standard error, not from trial and error.
-After changing behavior, run `tools/mutate.py`; add a mutant for any new behavior worth protecting.
+A test that only checks shape, finiteness, or "runs" is not enough for a behavior; pair it with one of the oracles above.
+
+Proving a test is useful (do this for every new behavior):
+
+1. Add a mutant to `tools/mutate.py`: the most plausible wrong implementation of the behavior.
+2. Run `python tools/mutate.py <id>` and see it SURVIVE; this proves the gap.
+3. Write the test; run the mutant again and see it KILLED by that test (the first FAILED line names it).
+4. A kill by an unrelated test is incidental, not protection; check by rerunning with that test file ignored.
+5. Before committing a behavior change, run the full `python tools/mutate.py`: every mutant must be killed.
 
 ## Gotchas
 

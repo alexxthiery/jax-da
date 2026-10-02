@@ -24,19 +24,21 @@ M0 = np.array([0.5, -1.0, 2.0])
 P0 = np.array([[1.0, 0.3, -0.2], [0.3, 0.5, 0.1], [-0.2, 0.1, 2.0]])
 
 
-def model(model_error=True):
+def model(model_error=True, initial="gaussian"):
     # Full covariances everywhere, so cross-covariance terms of Q, R, and P0 are exercised.
+    init = Gaussian.full(jnp.asarray(P0), loc=jnp.asarray(M0)) if initial == "gaussian" else PointMass(jnp.asarray(M0))
     return StateSpaceModel(
-        initial=Gaussian.full(jnp.asarray(P0), loc=jnp.asarray(M0)),
+        initial=init,
         transition=Additive(Linear(jnp.asarray(A), offset=jnp.asarray(B_MAP)),
                             Gaussian.full(jnp.asarray(Q), loc=jnp.asarray(B_NOISE)) if model_error else None),
         observation=Additive(Linear(jnp.asarray(H), offset=jnp.asarray(C)), Gaussian.full(jnp.asarray(R))),
     )
 
 
-def joint_gaussian(model_error):
+def joint_gaussian(model_error, initial="gaussian"):
     """Mean and covariance of (x_1..x_T, y_1..y_T) from x_t = A^t x_0 + sum A^{t-s} (b + eta_s)."""
     Qm, b = (Q, B_MAP + B_NOISE) if model_error else (np.zeros((D, D)), B_MAP)
+    P_init = P0 if initial == "gaussian" else np.zeros((D, D))
     powers = [np.linalg.matrix_power(A, k) for k in range(T + 1)]
     means, m = [], M0
     for _ in range(T):
@@ -46,7 +48,7 @@ def joint_gaussian(model_error):
     Cx = np.zeros((T * D, T * D))
     for t in range(1, T + 1):
         for s in range(1, T + 1):
-            block = powers[t] @ P0 @ powers[s].T
+            block = powers[t] @ P_init @ powers[s].T
             for k in range(1, min(t, s) + 1):
                 block = block + powers[t - k] @ Qm @ powers[s - k].T
             Cx[(t - 1) * D:t * D, (s - 1) * D:s * D] = block
@@ -60,12 +62,13 @@ def condition(mx, my, Cx, Cxy, Cy, y, rows):
     return mx[rows] + gain @ (y - my), Cx[np.ix_(rows, rows)] - gain @ Cxy[rows].T
 
 
-@pytest.mark.parametrize("model_error", [True, False])
-def test_filter_smoother_and_evidence_match_joint_conditioning(model_error):
-    ssm = model(model_error)
+# A known x_0 without model error makes every predicted covariance singular; test_fail_loud covers it.
+@pytest.mark.parametrize("model_error, initial", [(True, "gaussian"), (False, "gaussian"), (True, "point_mass")])
+def test_filter_smoother_and_evidence_match_joint_conditioning(model_error, initial):
+    ssm = model(model_error, initial)
     oracle = KalmanOracle.from_ssm(ssm)
     y = np.asarray(ssm.simulate(jax.random.PRNGKey(0), T).observations)
-    mx, my, Cx, Cxy, Cy = joint_gaussian(model_error)
+    mx, my, Cx, Cxy, Cy = joint_gaussian(model_error, initial)
     f, s = oracle.filter(jnp.asarray(y)), oracle.smooth(jnp.asarray(y))
     for t in range(T):
         rows = np.arange(t * D, (t + 1) * D)
@@ -80,11 +83,16 @@ def test_filter_smoother_and_evidence_match_joint_conditioning(model_error):
     assert float(f.log_evidence) == pytest.approx(ref, rel=1e-10)
 
 
-def test_selector_and_point_mass_supported():
-    ssm = StateSpaceModel(PointMass(jnp.ones(4)), Additive(Linear.damped_rotation(4), Gaussian.isotropic(4, 0.1)),
-                          Additive(Selector.every(4, 2), Gaussian.isotropic(2, 0.5)))
-    f = KalmanOracle.from_ssm(ssm).filter(ssm.simulate(jax.random.PRNGKey(1), 10).observations)
-    assert f.means.shape == (10, 4) and np.all(np.isfinite(f.covs))
+def test_selector_gives_the_same_answers_as_its_dense_matrix():
+    selector = Selector.every(4, 2)
+    as_selector = StateSpaceModel(Gaussian.isotropic(4, 1.0), Additive(Linear.damped_rotation(4), Gaussian.isotropic(4, 0.1)),
+                                  Additive(selector, Gaussian.isotropic(2, 0.5)))
+    as_matrix = as_selector.replace(observation=Additive(Linear(selector.matrix), Gaussian.isotropic(2, 0.5)))
+    y = as_selector.simulate(jax.random.PRNGKey(1), 10).observations
+    a, b = KalmanOracle.from_ssm(as_selector).filter(y), KalmanOracle.from_ssm(as_matrix).filter(y)
+    np.testing.assert_allclose(a.means, b.means, rtol=1e-12)
+    np.testing.assert_allclose(a.covs, b.covs, rtol=1e-12)
+    assert float(a.log_evidence) == pytest.approx(float(b.log_evidence), rel=1e-12)
 
 
 def test_non_linear_gaussian_models_rejected():

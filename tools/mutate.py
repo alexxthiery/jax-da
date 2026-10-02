@@ -9,7 +9,9 @@ suite runs on a temporary copy of the repository with that one change.
 
 Every mutant must be KILLED. A mutant whose pattern no longer matches the
 source fails loudly: update its pattern in the same change that moved the code.
-Add a mutant for each new behavior worth protecting.
+For a new behavior, add its mutant first and see it SURVIVE (the gap is real),
+then write the test and see that test kill it; a kill by an unrelated test
+(the FAILED line names it) is incidental and does not count.
 """
 
 import shutil
@@ -57,6 +59,21 @@ MUTANTS = [
     ("M33 oracle ignores offset", "oracles.py", "m_pred = A @ m + b", "m_pred = A @ m", False),
     ("M34 Linear dim from leading axis", "maps.py", "return int(self.matrix.shape[-2])", "return int(self.matrix.shape[0])", False),
     ("M35 SV prior not stationary", "problems.py", "sigma / np.sqrt(1 - phi ** 2)", "sigma", False),
+    ("M36 Laplace log_prob ignores loc", "laws.py", "jnp.abs(x - self.loc) / scale", "jnp.abs(x) / scale", False),
+    ("M37 Cauchy sample ignores loc", "laws.py", "return self.loc + self.scale * jax.random.cauchy", "return self.scale * jax.random.cauchy", False),
+    ("M38 mixture log_prob ignores loc", "laws.py", "std = jnp.broadcast_to(self.std, (self.dim,))\n        e = x - self.loc", "std = jnp.broadcast_to(self.std, (self.dim,))\n        e = x", False),
+    ("M39 energy score uses L1 norm", "metrics.py", "jnp.linalg.norm(ensemble - truth[..., None, :], axis=-1).mean(-1)", "jnp.abs(ensemble - truth[..., None, :]).sum(-1).mean(-1)", False),
+    ("M40 simulate ignores x0", "ssm.py", "x0 = self.sample_initial(k_init) if x0 is None else jnp.asarray(x0)", "x0 = self.sample_initial(k_init)", False),
+    ("M41 Multiplicative mean ignores scale", "conditional.py", "return jnp.exp(self.log_scale(x)) * self.noise.loc", "return self.noise.loc + 0.0 * self.log_scale(x)", False),
+    ("M42 PointMass covariance not zero", "laws.py", "return jnp.zeros((self.dim, self.dim))", "return jnp.eye(self.dim)", False),
+    ("M43 lorenz63 preset obs std", "problems.py", "obs_std: float = 2 ** 0.5", "obs_std: float = 1.0", False),
+    ("M44 two-scale coupling default", "dynamics/lorenz96_two_scale.py", "coupling_h: float = 1.0", "coupling_h: float = 0.5", False),
+    ("M45 linear_gaussian preset obs noise", "problems.py", "Additive(observe, Gaussian.isotropic(observe.dim, obs_std))", "Additive(observe, Gaussian.isotropic(observe.dim, model_error_std))", False),
+    ("M46 KS preset network", "problems.py", "def kuramoto_sivashinsky(num_points: int = 128, obs_every: int = 8,", "def kuramoto_sivashinsky(num_points: int = 128, obs_every: int = 4,", True),
+    ("M47 Kolmogorov preset index order", "problems.py", "indices = tuple(i * resolution + j for i in side for j in side)", "indices = tuple(j * resolution + i for i in side for j in side)", True),
+    ("M48 arctan replaced by tanh", "maps.py", "return jnp.arctan(z)", "return jnp.tanh(z)", False),
+    ("M49 spin-up one step short", "dynamics/_integrate.py", "x, None, length=n_steps)[0]", "x, None, length=n_steps - 1)[0]", False),
+    ("M50 ring distance not wrapped", "geometry.py", "return np.minimum(delta, self.n - delta).astype(np.float64)", "return delta.astype(np.float64)", False),
 ]
 
 

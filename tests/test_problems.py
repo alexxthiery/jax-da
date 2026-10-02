@@ -1,11 +1,11 @@
-"""Presets: deterministic construction, finite simulation, documented networks."""
+"""Presets: documented settings, deterministic construction, and model-specific statistics."""
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import jax_da as jd
 from jax_da import problems
-from jax_da.dynamics.lorenz96 import Lorenz96
 from jax_da.oracles import KalmanOracle
 
 PRESETS = {
@@ -34,28 +34,66 @@ def test_lorenz96_network_and_attractor_scale():
     assert 1.8 < float(traj.states.mean()) < 2.8 and 3.2 < float(traj.states.std()) < 4.0
 
 
-def test_two_scale_truth_pairs_with_single_scale_forecast_model():
-    truth = problems.lorenz96_two_scale(n_fast=8, n_spinup=300)
-    forecast = Lorenz96(dim=8, forcing=20.0)
-    x = truth.simulate(jax.random.PRNGKey(2), 5).states
-    assert forecast(x[:, :8]).shape == (5, 8)
-    assert truth.observation.map.indices == tuple(range(8))
+def cov(law):
+    return np.asarray(law.cov())
 
 
-def test_linear_gaussian_preset_is_oracle_compatible():
-    ssm = problems.linear_gaussian()
-    result = KalmanOracle.from_ssm(ssm).filter(ssm.simulate(jax.random.PRNGKey(3), 10).observations)
-    assert bool(jnp.all(jnp.isfinite(result.means)))
+def test_linear_gaussian_documented_structure():
+    ssm = problems.linear_gaussian(dim=4, obs_every=2, obs_std=0.5, model_error_std=0.3, initial_std=1.2,
+                                   decay=0.9, angle=0.3)
+    c, s = np.cos(0.3), np.sin(0.3)
+    block = 0.9 * np.array([[c, -s], [s, c]])
+    expected_A = np.block([[block, np.zeros((2, 2))], [np.zeros((2, 2)), block]])
+    np.testing.assert_allclose(ssm.transition.map.matrix, expected_A, rtol=1e-12)
+    assert ssm.observation.map.indices == (0, 2)
+    np.testing.assert_allclose(cov(ssm.observation.noise), 0.25 * np.eye(2))
+    np.testing.assert_allclose(cov(ssm.transition.noise), 0.09 * np.eye(4))
+    np.testing.assert_allclose(cov(ssm.initial), 1.44 * np.eye(4))
+    np.testing.assert_allclose(ssm.initial.loc, 0.0)
+
+
+def test_lorenz63_documented_settings():
+    # Sakov et al. (2012): observe all components every 0.25 time units with R = 2 I.
+    ssm = problems.lorenz63(n_spinup=10)
+    dyn = ssm.transition.map
+    assert (dyn.dt, dyn.substeps, dyn.sigma, dyn.rho, dyn.beta) == (0.25, 25, 10.0, 28.0, 8.0 / 3.0)
+    assert ssm.observation.map.indices == (0, 1, 2) and ssm.transition.noise is None
+    np.testing.assert_allclose(cov(ssm.observation.noise), 2.0 * np.eye(3), rtol=1e-12)
+    np.testing.assert_allclose(cov(ssm.initial), np.eye(3))
+
+
+def test_lorenz96_documented_settings():
+    # Sakov and Oke (2008): D = 40, F = 8, dt = 0.05, every site observed with R = I, perfect model.
+    ssm = problems.lorenz96(n_spinup=10)
+    dyn = ssm.transition.map
+    assert (dyn.dim, dyn.forcing, dyn.dt) == (40, 8.0, 0.05) and ssm.transition.noise is None
+    assert ssm.observation.map.indices == tuple(range(40))
+    np.testing.assert_allclose(cov(ssm.observation.noise), np.eye(40))
+
+
+def test_two_scale_documented_settings():
+    # Wilks (2005): K = 8, J = 32, F = 20, h = 1, c = b = 10; the slow block is observed.
+    ssm = problems.lorenz96_two_scale(n_spinup=10)
+    dyn = ssm.transition.map
+    assert (dyn.n_slow, dyn.n_fast, dyn.forcing, dyn.coupling_h, dyn.time_scale_c, dyn.amplitude_b) == \
+        (8, 32, 20.0, 1.0, 10.0, 10.0)
+    assert ssm.observation.map.indices == tuple(range(8))
+    assert isinstance(ssm.initial, jd.PointMass)  # perturbing the fast variables would leave the attractor
 
 
 @pytest.mark.pde
-def test_pde_presets_build_and_simulate():
+def test_pde_presets_documented_networks():
     pytest.importorskip("exponax")
-    for ssm, n_obs in ((problems.kuramoto_sivashinsky(n_spinup=50), 16),
-                       (problems.kolmogorov(resolution=16, obs_per_side=4, n_spinup=20), 16)):
-        assert ssm.obs_dim == n_obs
-        traj = ssm.simulate(jax.random.PRNGKey(4), 5)
-        assert bool(jnp.all(jnp.isfinite(traj.states)))
+    ks = problems.kuramoto_sivashinsky(n_spinup=5)
+    assert ks.observation.map.indices == tuple(range(0, 128, 8))
+    assert (ks.transition.map.dt, ks.transition.map.num_points) == (1.0, 128)
+    np.testing.assert_allclose(ks.transition.map.domain_extent, 32 * np.pi)
+    np.testing.assert_allclose(cov(ks.observation.noise), 0.49 * np.eye(16), rtol=1e-12)
+    kol = problems.kolmogorov(resolution=16, obs_per_side=4, n_spinup=5)
+    side = (0, 4, 8, 12)
+    assert kol.observation.map.indices == tuple(i * 16 + j for i in side for j in side)  # row-major sub-grid
+    np.testing.assert_allclose(cov(kol.observation.noise), 0.01 * np.eye(16), rtol=1e-12)
+    np.testing.assert_allclose(cov(kol.transition.noise), 0.04 * np.eye(256), rtol=1e-12)
 
 
 def test_linear_gaussian_full_has_documented_structure():

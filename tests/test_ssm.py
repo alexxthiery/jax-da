@@ -78,6 +78,14 @@ def test_simulate_noise_residuals_have_the_noise_law():
     np.testing.assert_allclose(np.corrcoef(np.asarray(eps[1:, 0]), np.asarray(eps[:-1, 0]))[0, 1], 0.0, atol=0.02)
 
 
+def test_simulate_starts_from_an_explicit_x0():
+    ssm = linear_ssm(model_error=False)
+    x0 = jnp.array([3.0, -2.0, 1.0, 0.5])
+    traj = ssm.simulate(jax.random.PRNGKey(5), 3, x0=x0)
+    np.testing.assert_array_equal(traj.initial, x0)
+    np.testing.assert_allclose(traj.states[0], ssm.mean_transition(x0), rtol=1e-12)
+
+
 def test_simulate_is_a_function_of_the_key():
     ssm = linear_ssm()
     a, b = ssm.simulate(jax.random.PRNGKey(3), 30), ssm.simulate(jax.random.PRNGKey(3), 30)

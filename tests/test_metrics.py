@@ -58,6 +58,15 @@ def test_fair_crps_is_unbiased_for_small_ensembles():
     assert float(metrics.crps(ens, truth).mean()) > exact * 1.05
 
 
+def test_energy_score_matches_pairwise_euclidean_definition():
+    ens = jax.random.normal(jax.random.PRNGKey(9), (2, 6, 3))
+    truth = jax.random.normal(jax.random.PRNGKey(10), (2, 3))
+    x, y = np.asarray(ens), np.asarray(truth)
+    term1 = np.linalg.norm(x - y[:, None], axis=-1).mean(-1)
+    term2 = np.linalg.norm(x[:, :, None] - x[:, None, :], axis=-1).mean((-1, -2))
+    np.testing.assert_allclose(metrics.energy_score(ens, truth), term1 - 0.5 * term2, rtol=1e-12)
+
+
 def test_energy_score_equals_crps_in_one_dimension():
     ens = jax.random.normal(jax.random.PRNGKey(4), (5, 9, 1))
     truth = jax.random.normal(jax.random.PRNGKey(5), (5, 1))

@@ -24,6 +24,12 @@ def test_lorenz96_fixed_point_and_index_convention():
     assert float(model.rhs(x)[2]) == pytest.approx(9.0)
 
 
+@pytest.mark.parametrize("model", [Lorenz63(), Lorenz96(dim=8)])
+def test_spinup_applies_the_map_exactly_n_times(model):
+    x = model.initial_condition(jax.random.PRNGKey(4))
+    np.testing.assert_allclose(model.spinup(x, 3), model(model(model(x))), rtol=1e-12)
+
+
 def test_lorenz63_rhs_hand_value():
     np.testing.assert_allclose(Lorenz63().rhs(jnp.array([1.0, 2.0, 3.0])),
                                [10.0, 1.0 * 25.0 - 2.0, 2.0 - 8.0])

@@ -43,6 +43,14 @@ def test_multiplicative_sampling_scale_and_extreme_log_scales_stay_finite():
         assert not bool(jnp.isnan(jax.grad(lambda v: tiny.log_prob(jnp.array([[0.1]]), v).sum())(x)).any())
 
 
+def test_multiplicative_mean_is_scale_times_noise_location():
+    law = jd.Multiplicative(L, jd.Gaussian.isotropic(3, 1.0, loc=jnp.array([0.5, -1.0, 2.0])))
+    np.testing.assert_allclose(law.mean(X), np.exp(np.asarray(L(X))) * np.array([0.5, -1.0, 2.0]), rtol=1e-12)
+    draws = law.sample(jax.random.PRNGKey(3), jnp.broadcast_to(X[0], (200_000, 2)))
+    scale = np.exp(np.asarray(L(X[0])))
+    np.testing.assert_allclose(draws.mean(0), law.mean(X[0]), atol=5 * float(scale.max()) / np.sqrt(200_000))
+
+
 def test_poisson_matches_scipy_and_has_poisson_moments():
     law = jd.Poisson(L)
     counts = jnp.array([[0.0, 2.0, 1.0], [5.0, 0.0, 3.0]])
