@@ -81,7 +81,7 @@ The model is built from three kinds of object, each usable on its own and each d
 
 | Kind | Members | Built-ins | Docs |
 |------|---------|-----------|------|
-| Map $\mathbb{R}^{\text{in\_dim}} \to \mathbb{R}^{\text{dim}}$ | `in_dim`, `dim`, `map(x)` | `Linear` (affine), `Selector`, `Elementwise`, `Function` (any JAX function), and the dynamics below | [docs/maps.md](docs/maps.md) |
+| Map $\mathbb{R}^m \to \mathbb{R}^n$ | `in_dim` ($m$), `dim` ($n$), `map(x)` | `Linear` (affine), `Selector`, `Elementwise`, `Function` (any JAX function), and the dynamics below | [docs/maps.md](docs/maps.md) |
 | Law on $\mathbb{R}^d$ | `dim`, `loc`, `sample`, `log_prob`, `cov` | `Gaussian` (isotropic, diagonal, full), `StudentT`, `Cauchy`, `Laplace`, `GaussianMixture`, `PointMass` | [docs/laws.md](docs/laws.md) |
 | Conditional law | `in_dim`, `dim`, `sample(key, x)`, `log_prob(out, x)`, `mean(x)` | `Additive` ($f(x) + \varepsilon$), `Multiplicative` ($e^{g(x)} \odot \varepsilon$), `Poisson` | [docs/laws.md](docs/laws.md#conditional-laws) |
 

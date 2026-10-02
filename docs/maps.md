@@ -1,6 +1,6 @@
 # Maps
 
-A map is a deterministic function $\mathbb{R}^{\text{in\_dim}} \to \mathbb{R}^{\text{dim}}$, called as `map(x)` on `(..., in_dim)` with any leading batch axes.
+A map is a deterministic function $\mathbb{R}^m \to \mathbb{R}^n$ with `in_dim` $= m$ and `dim` $= n$, called as `map(x)` on `(..., in_dim)` with any leading batch axes.
 Maps are the deterministic parts of a model: dynamics over one interval (`in_dim == dim`) or observation operators.
 The chaotic models in `jax_da.dynamics` ([Lorenz96](lorenz96.md), [KuramotoSivashinsky](kuramoto_sivashinsky.md), and the others) are maps too.
 For the Jacobian of any map use `jax.jacfwd(map)`.

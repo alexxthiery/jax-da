@@ -24,3 +24,17 @@ def test_every_readme_python_block_runs():
     assert len(blocks) >= 2
     for i, block in enumerate(blocks):
         exec(compile(block, f"README python block {i}", "exec"), {})
+
+
+def test_no_escaped_underscores_in_markdown_math():
+    """GitHub applies markdown escapes inside inline math, so `\\_` reaches MathJax as `_` in text mode.
+
+    `$\\text{in\\_dim}$` then fails with "'_' allowed only in math mode"; write such names in code
+    spans instead.
+    """
+    offenders = []
+    for md in [*ROOT.glob("*.md"), *(ROOT / "docs").glob("*.md")]:
+        text = re.sub(r"```.*?```", "", md.read_text(), flags=re.S)
+        text = re.sub(r"`[^`\n]*`", "", text)
+        offenders += [f"{md.name}: {line.strip()[:60]}" for line in text.splitlines() if "\\_" in line]
+    assert not offenders, offenders
