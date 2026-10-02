@@ -56,7 +56,11 @@ class KolmogorovFlow:
                                 drag=self.drag, injection_mode=self.forcing_wavenumber,
                                 injection_scale=self.forcing_scale)
 
-    def flow(self, x: Array) -> Array:
+    @property
+    def in_dim(self) -> int:
+        return self.dim
+
+    def __call__(self, x: Array) -> Array:
         """Vorticity after one interval ``dt``, ``(..., resolution**2) -> (..., resolution**2)``."""
         check_event_shape(x, (self.dim,))
         return _exponax.apply_steps(self._stepper(), x, _exponax.inner_steps(self.dt, self.dt_inner),
@@ -67,5 +71,5 @@ class KolmogorovFlow:
         return 0.5 * jax.random.normal(key, (self.dim,))
 
     def spinup(self, x: Array, n_steps: int) -> Array:
-        """Apply ``flow`` ``n_steps`` times."""
-        return spin(self.flow, x, n_steps)
+        """Apply the one-interval map ``n_steps`` times."""
+        return spin(self, x, n_steps)

@@ -5,44 +5,54 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from jax_da.dynamics.linear import LinearDynamics
+from jax_da.conditional import Additive
 from jax_da.dynamics.lorenz96 import Lorenz96
-from jax_da.noise import Gaussian, Laplace
-from jax_da.observations import Linear, Selector
+from jax_da.laws import Gaussian, Laplace, PointMass
+from jax_da.maps import Linear, Selector
 from jax_da.oracles import KalmanOracle
 from jax_da.ssm import StateSpaceModel
 
 T, D, P = 4, 3, 2
+# Raw model constants; the brute-force reference uses these, never the oracle's extracted parameters.
+A = np.array([[0.9, 0.2, 0.0], [-0.1, 0.8, 0.3], [0.0, 0.1, 0.95]])
+B_MAP, B_NOISE = np.array([0.3, -0.2, 0.1]), np.array([0.05, 0.0, -0.1])  # map offset and noise loc
+H = np.array([[1.0, 0.0, 0.5], [0.0, 1.0, -0.5]])
+C = np.array([1.0, -0.5])
+Q = np.array([[0.16, 0.06, 0.0], [0.06, 0.2, -0.05], [0.0, -0.05, 0.1]])
+R = np.array([[0.3, 0.05], [0.05, 0.2]])
+M0 = np.array([0.5, -1.0, 2.0])
+P0 = np.array([[1.0, 0.3, -0.2], [0.3, 0.5, 0.1], [-0.2, 0.1, 2.0]])
 
 
 def model(model_error=True):
+    # Full covariances everywhere, so cross-covariance terms of Q, R, and P0 are exercised.
     return StateSpaceModel(
-        dynamics=LinearDynamics(jnp.array([[0.9, 0.2, 0.0], [-0.1, 0.8, 0.3], [0.0, 0.1, 0.95]])),
-        obs_operator=Linear(jnp.array([[1.0, 0.0, 0.5], [0.0, 1.0, -0.5]])),
-        obs_noise=Gaussian.full(jnp.array([[0.3, 0.05], [0.05, 0.2]])),
-        initial_mean=jnp.array([0.5, -1.0, 2.0]),
-        # Full covariances everywhere, so cross-covariance terms of Q, R, and P0 are exercised.
-        initial_noise=Gaussian.full(jnp.array([[1.0, 0.3, -0.2], [0.3, 0.5, 0.1], [-0.2, 0.1, 2.0]])),
-        model_error=Gaussian.full(jnp.array([[0.16, 0.06, 0.0], [0.06, 0.2, -0.05], [0.0, -0.05, 0.1]]))
-        if model_error else None,
+        initial=Gaussian.full(jnp.asarray(P0), loc=jnp.asarray(M0)),
+        transition=Additive(Linear(jnp.asarray(A), offset=jnp.asarray(B_MAP)),
+                            Gaussian.full(jnp.asarray(Q), loc=jnp.asarray(B_NOISE)) if model_error else None),
+        observation=Additive(Linear(jnp.asarray(H), offset=jnp.asarray(C)), Gaussian.full(jnp.asarray(R))),
     )
 
 
-def joint_gaussian(o):
-    """Mean and covariance of (x_1..x_T, y_1..y_T), built from x_t = A^t x_0 + sum A^{t-s} eta_s."""
-    A, H, Q, R, m0, P0 = (np.asarray(v) for v in (o.A, o.H, o.Q, o.R, o.m0, o.P0))
+def joint_gaussian(model_error):
+    """Mean and covariance of (x_1..x_T, y_1..y_T) from x_t = A^t x_0 + sum A^{t-s} (b + eta_s)."""
+    Qm, b = (Q, B_MAP + B_NOISE) if model_error else (np.zeros((D, D)), B_MAP)
     powers = [np.linalg.matrix_power(A, k) for k in range(T + 1)]
-    mx = np.concatenate([powers[t] @ m0 for t in range(1, T + 1)])
+    means, m = [], M0
+    for _ in range(T):
+        m = A @ m + b
+        means.append(m)
+    mx = np.concatenate(means)
     Cx = np.zeros((T * D, T * D))
     for t in range(1, T + 1):
         for s in range(1, T + 1):
             block = powers[t] @ P0 @ powers[s].T
             for k in range(1, min(t, s) + 1):
-                block = block + powers[t - k] @ Q @ powers[s - k].T
+                block = block + powers[t - k] @ Qm @ powers[s - k].T
             Cx[(t - 1) * D:t * D, (s - 1) * D:s * D] = block
     Hb = np.kron(np.eye(T), H)
     Cxy, Cy = Cx @ Hb.T, Hb @ Cx @ Hb.T + np.kron(np.eye(T), R)
-    return mx, Hb @ mx, Cx, Cxy, Cy
+    return mx, Hb @ mx + np.tile(C, T), Cx, Cxy, Cy
 
 
 def condition(mx, my, Cx, Cxy, Cy, y, rows):
@@ -55,7 +65,7 @@ def test_filter_smoother_and_evidence_match_joint_conditioning(model_error):
     ssm = model(model_error)
     oracle = KalmanOracle.from_ssm(ssm)
     y = np.asarray(ssm.simulate(jax.random.PRNGKey(0), T).observations)
-    mx, my, Cx, Cxy, Cy = joint_gaussian(oracle)
+    mx, my, Cx, Cxy, Cy = joint_gaussian(model_error)
     f, s = oracle.filter(jnp.asarray(y)), oracle.smooth(jnp.asarray(y))
     for t in range(T):
         rows = np.arange(t * D, (t + 1) * D)
@@ -70,17 +80,16 @@ def test_filter_smoother_and_evidence_match_joint_conditioning(model_error):
     assert float(f.log_evidence) == pytest.approx(ref, rel=1e-10)
 
 
-def test_selector_operator_supported():
-    ssm = StateSpaceModel(LinearDynamics.damped_rotation(4), Selector.every(4, 2), Gaussian.isotropic(2, 0.5),
-                          jnp.zeros(4), Gaussian.isotropic(4, 1.0), Gaussian.isotropic(4, 0.1))
-    y = ssm.simulate(jax.random.PRNGKey(1), 10).observations
-    f = KalmanOracle.from_ssm(ssm).filter(y)
+def test_selector_and_point_mass_supported():
+    ssm = StateSpaceModel(PointMass(jnp.ones(4)), Additive(Linear.damped_rotation(4), Gaussian.isotropic(4, 0.1)),
+                          Additive(Selector.every(4, 2), Gaussian.isotropic(2, 0.5)))
+    f = KalmanOracle.from_ssm(ssm).filter(ssm.simulate(jax.random.PRNGKey(1), 10).observations)
     assert f.means.shape == (10, 4) and np.all(np.isfinite(f.covs))
 
 
 def test_non_linear_gaussian_models_rejected():
-    with pytest.raises(ValueError, match="linear"):
-        KalmanOracle.from_ssm(StateSpaceModel(Lorenz96(dim=8), Selector.every(8, 2), Gaussian.isotropic(4, 1.0), jnp.zeros(8)))
-    bad = model().replace(obs_noise=Laplace(P, scale=0.5))
+    observe = Additive(Selector.every(8, 2), Gaussian.isotropic(4, 1.0))
+    with pytest.raises(ValueError, match="Linear or Selector"):
+        KalmanOracle.from_ssm(StateSpaceModel(Gaussian.isotropic(8, 1.0), Additive(Lorenz96(dim=8)), observe))
     with pytest.raises(ValueError, match="Gaussian"):
-        KalmanOracle.from_ssm(bad)
+        KalmanOracle.from_ssm(model().replace(observation=Additive(Linear(jnp.asarray(H)), Laplace(P, scale=0.5))))

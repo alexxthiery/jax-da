@@ -19,7 +19,8 @@ def test_every_doc_page_is_linked_from_the_readme():
     assert not missing, f"README does not link: {missing}"
 
 
-def test_readme_quick_start_runs():
-    text = (ROOT / "README.md").read_text()
-    block = text.split("## Quick start", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
-    exec(compile(block, "README quick start", "exec"), {})
+def test_every_readme_python_block_runs():
+    blocks = re.findall(r"```python\n(.*?)```", (ROOT / "README.md").read_text(), flags=re.S)
+    assert len(blocks) >= 2
+    for i, block in enumerate(blocks):
+        exec(compile(block, f"README python block {i}", "exec"), {})

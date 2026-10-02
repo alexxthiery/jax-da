@@ -2,7 +2,7 @@
 
 State-space models, scoring, and oracles for testing data assimilation algorithms in JAX.
 No assimilation algorithm lives in the package.
-Read in this order: this file, the [README](README.md) (interface table), `jax_da/protocols.py` (component contracts), [docs/design.md](docs/design.md) (scope and decisions).
+Read in this order: this file, the [README](README.md) (interface table), `jax_da/protocols.py` (the Map, Law, and ConditionalLaw contracts), [docs/design.md](docs/design.md) (scope and decisions).
 
 ## Quick reference
 
@@ -33,17 +33,18 @@ pip install -e '.[dev,pde]'
 ```text
 jax_da/
   __init__.py           re-exports the public API
-  protocols.py          Dynamics, NoiseLaw, ObservationOperator, Geometry contracts
-  ssm.py                StateSpaceModel, Trajectory
-  dynamics/             one file per system: function (wraps any JAX map), linear, lorenz63, lorenz96, lorenz96_two_scale,
-                        ks, kolmogorov; _integrate (RK4, spin-up), _exponax (cached steppers)
-  noise.py              Gaussian, StudentT, Cauchy, Laplace, GaussianMixture
-  observations.py       Selector, Linear, Elementwise, FunctionOperator
+  protocols.py          Map, Law, ConditionalLaw, Geometry contracts
+  ssm.py                StateSpaceModel (initial, transition, observation, geometry), Trajectory
+  maps.py               Linear (affine), Selector, Elementwise, Function
+  laws.py               Gaussian, StudentT, Cauchy, Laplace, GaussianMixture, PointMass
+  conditional.py        Additive, Multiplicative, Poisson
+  dynamics/             nonlinear maps, one file each: lorenz63, lorenz96, lorenz96_two_scale,
+                        ks, kolmogorov, tanh_squared; _integrate (RK4, spin-up), _exponax (cached steppers)
   geometry.py           Unstructured, Ring, Torus2D
   metrics.py            ensemble scores
-  oracles.py            KalmanOracle
+  oracles.py            KalmanOracle (affine linear-Gaussian)
   problems.py           presets
-  _validation.py        shape and parameter checks
+  _validation.py        shape checks, placeholder-aware parameter checks
 docs/                   design.md plus one page per object
 examples/               algorithms written against the public API (not part of the package)
 tests/                  test_interface.py (every object) plus one file per module
@@ -56,7 +57,7 @@ The package never contains an assimilation algorithm; algorithms belong in `exam
 
 - One object per file in `jax_da/dynamics/`; `jax_da/__init__.py` re-exports the public API.
 - Objects are `flax.struct.dataclass`. Numeric parameters are pytree children; sizes, modes, and `dt` loop counts are `struct.field(pytree_node=False)`.
-- Validate numeric parameters in `__post_init__` behind `is_concrete`; validate static fields unguarded.
+- Validate numeric parameters in `__post_init__` behind `is_concrete`, and dimension checks behind `placeholder_dims`; JAX rebuilds pytrees with `None`, integer, or `object()` leaves. Read dimensions from trailing array axes (`shape[-1]`), never leading ones.
 - Every public method on states starts with `check_event_shape` (`jax_da/_validation.py`); never reshape or broadcast a malformed input.
 - States are flat `(..., D)`; leading axes are batch axes; structured layouts are described by `geometry`, not by the array shape.
 - Explicit PRNG keys; no global random state.

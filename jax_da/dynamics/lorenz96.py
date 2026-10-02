@@ -17,7 +17,7 @@ def lorenz96_rhs(x: Array, forcing) -> Array:
 
 @struct.dataclass
 class Lorenz96:
-    """Lorenz-96 flow over one interval ``dt``, integrated with RK4.
+    """Lorenz-96 one-interval map over ``dt``, integrated with RK4.
 
     With ``forcing = 8`` the system is chaotic for ``dim >= 4``; one model
     time unit is about 5 days of atmospheric error growth, so ``dt = 0.05``
@@ -46,7 +46,11 @@ class Lorenz96:
     def rhs(self, x: Array) -> Array:
         return lorenz96_rhs(x, self.forcing)
 
-    def flow(self, x: Array) -> Array:
+    @property
+    def in_dim(self) -> int:
+        return self.dim
+
+    def __call__(self, x: Array) -> Array:
         """State after one interval ``dt``, ``(..., D) -> (..., D)``."""
         check_event_shape(x, (self.dim,))
         return rk4(self.rhs, x, self.dt, self.substeps)
@@ -56,5 +60,5 @@ class Lorenz96:
         return self.forcing + 0.5 * jax.random.normal(key, (self.dim,))
 
     def spinup(self, x: Array, n_steps: int) -> Array:
-        """Apply ``flow`` ``n_steps`` times."""
-        return spin(self.flow, x, n_steps)
+        """Apply the one-interval map ``n_steps`` times."""
+        return spin(self, x, n_steps)

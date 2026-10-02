@@ -3,8 +3,8 @@
     x_{t+1} = F(x_t) + eta_t,   eta_t ~ N(0, Q)
     y_t     = h(x_t) + eps_t,   eps_t ~ N(0, R)
 
-``F`` and ``h`` are ordinary JAX functions of one state; ``FunctionDynamics``
-and ``FunctionOperator`` apply them to ensembles. The particle filter from
+``F`` and ``h`` are ordinary JAX functions of one state; ``jax_da.Function``
+applies them to ensembles. The particle filter from
 ``bootstrap_pf_linear.py`` only uses the model's sampling and density methods,
 so it runs unchanged on any jax-da model.
 
@@ -30,12 +30,10 @@ def h(x):
 
 def build_model():
     return jax_da.StateSpaceModel(
-        dynamics=jax_da.FunctionDynamics(F, dim=2),
-        obs_operator=jax_da.FunctionOperator(h, in_dim=2, dim=2),
-        obs_noise=jax_da.Gaussian.isotropic(2, 0.2),
-        initial_mean=jnp.array([1.0, 0.0]),
-        initial_noise=jax_da.Gaussian.isotropic(2, 0.5),
-        model_error=jax_da.Gaussian.full(jnp.array([[0.02, 0.01], [0.01, 0.02]])),
+        initial=jax_da.Gaussian.isotropic(2, 0.5, loc=jnp.array([1.0, 0.0])),
+        transition=jax_da.Additive(jax_da.Function(F, in_dim=2, dim=2),
+                                   jax_da.Gaussian.full(jnp.array([[0.02, 0.01], [0.01, 0.02]]))),
+        observation=jax_da.Additive(jax_da.Function(h, in_dim=2, dim=2), jax_da.Gaussian.isotropic(2, 0.2)),
     )
 
 

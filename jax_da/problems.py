@@ -2,8 +2,9 @@
 
 Each function returns a ``StateSpaceModel``. Keyword arguments override the
 defaults, so a preset is a starting point rather than a fixed configuration.
-Chaotic presets place ``initial_mean`` on the attractor by spinning up from
-``attractor_seed``; ``x_0`` is then ``initial_mean`` plus ``initial_std`` noise.
+Chaotic presets spin up from ``attractor_seed`` to a point on the attractor;
+``x_0`` is that point plus Gaussian noise of std ``initial_std`` (a ``PointMass``
+when ``initial_std`` is 0).
 The same arguments always give the same model.
 """
 
@@ -11,15 +12,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from jax_da.conditional import Additive, Multiplicative, Poisson
 from jax_da.dynamics.kolmogorov import KolmogorovFlow
 from jax_da.dynamics.ks import KuramotoSivashinsky
-from jax_da.dynamics.linear import LinearDynamics
 from jax_da.dynamics.lorenz63 import Lorenz63
 from jax_da.dynamics.lorenz96 import Lorenz96
 from jax_da.dynamics.lorenz96_two_scale import Lorenz96TwoScale
+from jax_da.dynamics.tanh_squared import TanhSquared
 from jax_da.geometry import Ring, Torus2D
-from jax_da.noise import Gaussian
-from jax_da.observations import Linear, Selector
+from jax_da.laws import Gaussian, PointMass
+from jax_da.maps import Linear, Selector
 from jax_da.ssm import StateSpaceModel
 
 
@@ -30,26 +32,23 @@ def _attractor_point(dynamics, n_spinup: int, attractor_seed: int):
 
 def _chaotic(dynamics, obs_operator, obs_std, initial_std, model_error_std, n_spinup, attractor_seed):
     D = dynamics.dim
+    x_star = _attractor_point(dynamics, n_spinup, attractor_seed)
     return StateSpaceModel(
-        dynamics=dynamics,
-        obs_operator=obs_operator,
-        obs_noise=Gaussian.isotropic(obs_operator.dim, obs_std),
-        initial_mean=_attractor_point(dynamics, n_spinup, attractor_seed),
-        initial_noise=Gaussian.isotropic(D, initial_std) if initial_std else None,
-        model_error=Gaussian.isotropic(D, model_error_std) if model_error_std else None,
+        initial=Gaussian.isotropic(D, initial_std, loc=x_star) if initial_std else PointMass(x_star),
+        transition=Additive(dynamics, Gaussian.isotropic(D, model_error_std) if model_error_std else None),
+        observation=Additive(obs_operator, Gaussian.isotropic(obs_operator.dim, obs_std)),
+        geometry=dynamics.geometry,
     )
 
 
 def linear_gaussian(dim: int = 4, obs_every: int = 2, obs_std: float = 0.5, model_error_std: float = 0.3,
                     initial_std: float = 1.0, decay: float = 0.98, angle: float = 0.2) -> StateSpaceModel:
     """Damped rotations observed on every ``obs_every``-th component; exact answers via ``KalmanOracle``."""
+    observe = Selector.every(dim, obs_every)
     return StateSpaceModel(
-        dynamics=LinearDynamics.damped_rotation(dim, decay, angle),
-        obs_operator=Selector.every(dim, obs_every),
-        obs_noise=Gaussian.isotropic(len(range(0, dim, obs_every)), obs_std),
-        initial_mean=jnp.zeros(dim),
-        initial_noise=Gaussian.isotropic(dim, initial_std),
-        model_error=Gaussian.isotropic(dim, model_error_std),
+        initial=Gaussian.isotropic(dim, initial_std),
+        transition=Additive(Linear.damped_rotation(dim, decay, angle), Gaussian.isotropic(dim, model_error_std)),
+        observation=Additive(observe, Gaussian.isotropic(observe.dim, obs_std)),
     )
 
 
@@ -86,12 +85,9 @@ def linear_gaussian_full(state_dim: int = 6, obs_dim: int = 3, spectral_radius: 
     r = _random_covariance(rng, obs_dim, obs_std)
     p0 = _random_covariance(rng, state_dim, initial_std)
     return StateSpaceModel(
-        dynamics=LinearDynamics(jnp.asarray(a)),
-        obs_operator=Linear(jnp.asarray(h)),
-        obs_noise=Gaussian.full(jnp.asarray(r)),
-        initial_mean=jnp.zeros(state_dim),
-        initial_noise=Gaussian.full(jnp.asarray(p0)),
-        model_error=Gaussian.full(jnp.asarray(q)),
+        initial=Gaussian.full(jnp.asarray(p0)),
+        transition=Additive(Linear(jnp.asarray(a)), Gaussian.full(jnp.asarray(q))),
+        observation=Additive(Linear(jnp.asarray(h)), Gaussian.full(jnp.asarray(r))),
     )
 
 
@@ -162,12 +158,10 @@ def advection_diffusion(grid_shape: tuple[int, ...] = (256,), dt: float = 1.0, v
     observed[tuple(slice(0, None, obs_every) for _ in shape)] = True
     indices = tuple(int(i) for i in np.flatnonzero(observed))  # row-major flat indices
     return StateSpaceModel(
-        dynamics=LinearDynamics(jnp.asarray(_fourier_operator(a)), layout=layout),
-        obs_operator=Selector(dim, indices),
-        obs_noise=Gaussian.isotropic(len(indices), obs_std),
-        initial_mean=jnp.zeros(dim),
-        initial_noise=Gaussian.full(jnp.asarray(_fourier_operator(sigma))),
-        model_error=Gaussian.full(jnp.asarray(_fourier_operator(q))),
+        initial=Gaussian.full(jnp.asarray(_fourier_operator(sigma))),
+        transition=Additive(Linear(jnp.asarray(_fourier_operator(a))), Gaussian.full(jnp.asarray(_fourier_operator(q)))),
+        observation=Additive(Selector(dim, indices), Gaussian.isotropic(len(indices), obs_std)),
+        geometry=layout,
     )
 
 
@@ -226,3 +220,56 @@ def kolmogorov(resolution: int = 64, obs_per_side: int = 8, dt: float = 0.2, obs
     indices = tuple(i * resolution + j for i in side for j in side)
     return _chaotic(dynamics, Selector(dynamics.dim, indices), obs_std, initial_std, model_error_std,
                     n_spinup, attractor_seed)
+
+
+def stochastic_volatility(dim: int = 1, phi: float = 0.98, sigma: float = 0.15, beta: float = 0.8,
+                          mu: float = 0.0) -> StateSpaceModel:
+    """Stochastic volatility: latent log-variance ``x`` drives the scale of the observed returns.
+
+        x_t = mu + phi (x_{t-1} - mu) + sigma eta_t,   y_t = beta exp(x_t / 2) eps_t,   eta, eps ~ N(0, I)
+
+    independently per component, with ``x_0`` from the stationary law
+    ``N(mu, sigma^2 / (1 - phi^2))``. The likelihood is far from Gaussian in
+    ``x``: a classic particle-filter benchmark on which Kalman-type methods are
+    not consistent (Kim, Shephard, and Chib 1998; multivariate diagonal form as
+    in Chib, Omori, and Asai 2009 and the SIXO benchmark). Defaults follow the
+    flowsmc example.
+    """
+    if not abs(phi) < 1:
+        raise ValueError(f"|phi| must be < 1 for a stationary initial law, got {phi}")
+    eye = jnp.eye(dim)
+    return StateSpaceModel(
+        initial=Gaussian.isotropic(dim, sigma / np.sqrt(1 - phi ** 2), loc=mu),
+        transition=Additive(Linear(phi * eye, offset=(1 - phi) * mu), Gaussian.isotropic(dim, sigma)),
+        observation=Multiplicative(Linear(0.5 * eye, offset=np.log(beta)), Gaussian.isotropic(dim, 1.0)),
+    )
+
+
+def nonlinear_poisson(state_dim: int = 4, obs_dim: int = 32, rho: float = 0.55, alpha: float = 0.55,
+                      q: float = 0.45, seed: int = 0) -> StateSpaceModel:
+    """Nonlinear Gaussian dynamics observed through Poisson counts (flowsmc benchmark).
+
+        x_0 ~ N(0, I),   x_t = rho x_{t-1} + alpha (tanh(B x_{t-1})^2 - 1/4) + q eta_t,
+        y_{t,i} ~ Poisson(exp(C_i x_t + b_i))
+
+    ``B`` is a Gaussian matrix scaled to spectral norm at most 1.2 (``[[1.5]]``
+    when ``state_dim == 1``), ``C`` is Gaussian with entry variance
+    ``1 / state_dim`` (an even ramp in ``[-1.2, 1.2]`` when ``state_dim == 1``),
+    and ``b_i = -0.2 + 0.1 cos(i)``, as in flowsmc's "quick" configuration.
+    Matrices come from ``numpy.random.default_rng(seed)``. ``rho``, ``alpha``,
+    and ``q`` are pytree children, so they can be learned by gradient.
+    """
+    rng = np.random.default_rng(seed)
+    if state_dim == 1:
+        B = np.array([[1.5]])
+        C = (1.2 * np.linspace(-1.0, 1.0, obs_dim))[:, None]
+    else:
+        raw = rng.standard_normal((state_dim, state_dim))
+        B = 1.2 * raw / max(np.linalg.norm(raw, 2), 1.0)
+        C = rng.standard_normal((obs_dim, state_dim)) / np.sqrt(state_dim)
+    b = -0.2 + 0.1 * np.cos(np.arange(obs_dim))
+    return StateSpaceModel(
+        initial=Gaussian.isotropic(state_dim, 1.0),
+        transition=Additive(TanhSquared(jnp.asarray(B), rho, alpha), Gaussian.isotropic(state_dim, q)),
+        observation=Poisson(Linear(jnp.asarray(C), offset=jnp.asarray(b))),
+    )

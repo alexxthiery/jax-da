@@ -51,7 +51,11 @@ class KuramotoSivashinsky:
                                 domain_extent=self.domain_extent, num_points=self.num_points,
                                 dt=self.dt_inner, order=self.order)
 
-    def flow(self, x: Array) -> Array:
+    @property
+    def in_dim(self) -> int:
+        return self.dim
+
+    def __call__(self, x: Array) -> Array:
         """Field after one interval ``dt``, ``(..., num_points) -> (..., num_points)``."""
         check_event_shape(x, (self.dim,))
         return _exponax.apply_steps(self._stepper(), x, _exponax.inner_steps(self.dt, self.dt_inner), (self.num_points,))
@@ -63,5 +67,5 @@ class KuramotoSivashinsky:
         return u0 + 0.01 * jax.random.normal(key, (self.num_points,))
 
     def spinup(self, x: Array, n_steps: int) -> Array:
-        """Apply ``flow`` ``n_steps`` times."""
-        return spin(self.flow, x, n_steps)
+        """Apply the one-interval map ``n_steps`` times."""
+        return spin(self, x, n_steps)

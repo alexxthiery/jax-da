@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from scipy import integrate, stats
 
-from jax_da.noise import Cauchy, Gaussian, GaussianMixture, Laplace, StudentT
+from jax_da.laws import Cauchy, Gaussian, GaussianMixture, Laplace, StudentT
 
 D = 3
 LAWS = {

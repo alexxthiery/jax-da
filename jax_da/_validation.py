@@ -39,7 +39,28 @@ def is_concrete(value) -> bool:
     Args:
         value: A parameter value.
 
+    JAX also rebuilds pytrees with integer axis specs (a ``vmap`` ``in_axes``
+    tree built with ``tree.map``), so a plain Python ``int`` counts as a
+    placeholder; constructors cast numeric parameters to float.
+
     Returns:
-        False for JAX tracers and plain ``object()`` placeholders, else True.
+        False for JAX tracers, plain ``object()`` and ``int`` placeholders, else True.
     """
-    return type(value) is not object and not isinstance(value, jax.core.Tracer)
+    return type(value) not in (object, int) and not isinstance(value, jax.core.Tracer)
+
+
+def placeholder_dims(*objects) -> bool:
+    """True when the ``dim``/``in_dim`` of these objects cannot be read.
+
+    That happens only when JAX rebuilds a pytree with placeholder leaves
+    (``None`` or integer ``in_axes`` specs, ``object()``) in place of arrays;
+    the object was validated when first built from real values, so
+    ``__post_init__`` dimension checks skip the rebuild.
+    """
+    try:
+        for obj in objects:
+            obj.dim, getattr(obj, "in_dim", None)
+    except (AttributeError, TypeError):
+        return True
+    return False
+

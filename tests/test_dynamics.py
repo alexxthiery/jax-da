@@ -4,9 +4,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from jax_da.dynamics.linear import LinearDynamics
 from jax_da.dynamics.lorenz63 import Lorenz63
 from jax_da.dynamics.lorenz96 import Lorenz96, lorenz96_rhs
+from jax_da.maps import Linear
 
 
 def test_lorenz96_energy_budget():
@@ -32,8 +32,8 @@ def test_lorenz63_rhs_hand_value():
 @pytest.mark.parametrize("model", [Lorenz63(dt=0.2), Lorenz96(dim=8, dt=0.2)])
 def test_rk4_is_fourth_order(model):
     x = model.spinup(model.initial_condition(jax.random.PRNGKey(1)), 50)
-    ref = type(model)(**{**model.__dict__, "substeps": 256}).flow(x)
-    errors = [float(jnp.abs(type(model)(**{**model.__dict__, "substeps": n}).flow(x) - ref).max())
+    ref = type(model)(**{**model.__dict__, "substeps": 256})(x)
+    errors = [float(jnp.abs(type(model)(**{**model.__dict__, "substeps": n})(x) - ref).max())
               for n in (8, 16)]
     assert 12 < errors[0] / errors[1] < 20
 
@@ -47,7 +47,7 @@ def test_lorenz96_leading_lyapunov_exponent():
 
     def step(carry, _):
         a, b = carry
-        a, b = model.flow(a), model.flow(b)
+        a, b = model(a), model(b)
         d = jnp.linalg.norm(b - a)
         return (a, a + (b - a) * d0 / d), jnp.log(d / d0)
 
@@ -57,14 +57,14 @@ def test_lorenz96_leading_lyapunov_exponent():
 
 
 def test_damped_rotation_is_stable_and_flows_batches():
-    dyn = LinearDynamics.damped_rotation(5, decay=0.9)
+    dyn = Linear.damped_rotation(5, decay=0.9)
     assert np.max(np.abs(np.linalg.eigvals(np.asarray(dyn.matrix)))) == pytest.approx(0.9)
     x = jnp.ones((3, 5))
-    np.testing.assert_allclose(dyn.flow(x), x @ dyn.matrix.T)
+    np.testing.assert_allclose(dyn(x), x @ dyn.matrix.T)
 
 
 def test_flow_rejects_wrong_state_shape():
     with pytest.raises(ValueError):
-        Lorenz96(dim=8).flow(jnp.zeros(9))
+        Lorenz96(dim=8)(jnp.zeros(9))
     with pytest.raises(ValueError):
         Lorenz96(dim=3)

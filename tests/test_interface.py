@@ -1,95 +1,121 @@
-"""Shared contracts, parametrized over every public dynamics, noise law, and operator."""
+"""Shared contracts, parametrized over every public map, law, and conditional law."""
 import jax
 import jax.numpy as jnp
 import pytest
 
-import jax_da
-from jax_da.protocols import Dynamics, Geometry, NoiseLaw, ObservationOperator
+import jax_da as jd
+from jax_da.protocols import ConditionalLaw, Geometry, Law, Map
 
-DYNAMICS = {
-    "LinearDynamics": lambda: jax_da.LinearDynamics.damped_rotation(5),
-    "Lorenz63": lambda: jax_da.Lorenz63(),
-    "Lorenz96": lambda: jax_da.Lorenz96(dim=10),
-    "Lorenz96TwoScale": lambda: jax_da.Lorenz96TwoScale(n_slow=4, n_fast=3),
-    "KuramotoSivashinsky": lambda: jax_da.KuramotoSivashinsky(num_points=32),
-    "KolmogorovFlow": lambda: jax_da.KolmogorovFlow(resolution=8),
-    "FunctionDynamics": lambda: jax_da.FunctionDynamics(lambda x: x + 0.1 * jnp.sin(x[::-1]), 4),
+MAPS = {
+    "Linear": lambda: jd.Linear.random_orthonormal(jax.random.PRNGKey(0), 6, 3),
+    "Selector": lambda: jd.Selector.every(6, 2),
+    "Elementwise": lambda: jd.Elementwise(jd.Selector.every(6, 2), "arctan"),
+    "Function": lambda: jd.Function(lambda x: jnp.tanh(x[:3] * x[3:]), 6, 3),
+    "Lorenz63": lambda: jd.Lorenz63(),
+    "Lorenz96": lambda: jd.Lorenz96(dim=10),
+    "Lorenz96TwoScale": lambda: jd.Lorenz96TwoScale(n_slow=4, n_fast=3),
+    "TanhSquared": lambda: jd.TanhSquared(jnp.eye(3)),
+    "KuramotoSivashinsky": lambda: jd.KuramotoSivashinsky(num_points=32),
+    "KolmogorovFlow": lambda: jd.KolmogorovFlow(resolution=8),
 }
 PDE = {"KuramotoSivashinsky", "KolmogorovFlow"}
-NOISE = {
-    "Gaussian": lambda: jax_da.Gaussian.isotropic(3, 0.5),
-    "StudentT": lambda: jax_da.StudentT(3, df=4.0),
-    "Cauchy": lambda: jax_da.Cauchy(3),
-    "Laplace": lambda: jax_da.Laplace(3),
-    "GaussianMixture": lambda: jax_da.GaussianMixture(3),
+LAWS = {
+    "Gaussian": lambda: jd.Gaussian.isotropic(3, 0.5, loc=1.0),
+    "StudentT": lambda: jd.StudentT(3, df=4.0, loc=1.0),
+    "Cauchy": lambda: jd.Cauchy(3),
+    "Laplace": lambda: jd.Laplace(3),
+    "GaussianMixture": lambda: jd.GaussianMixture(3),
+    "PointMass": lambda: jd.PointMass(jnp.arange(3.0)),
 }
-OPERATORS = {
-    "Selector": lambda: jax_da.Selector.every(6, 2),
-    "Linear": lambda: jax_da.Linear.random_orthonormal(jax.random.PRNGKey(0), 6, 3),
-    "Elementwise": lambda: jax_da.Elementwise(jax_da.Selector.every(6, 2), "arctan"),
-    "FunctionOperator": lambda: jax_da.FunctionOperator(lambda x: jnp.tanh(x[:3] * x[3:]), 6, 3),
+CONDITIONAL = {
+    "Additive": lambda: jd.Additive(jd.Selector.every(6, 2), jd.Gaussian.isotropic(3, 0.5)),
+    "Multiplicative": lambda: jd.Multiplicative(jd.Linear(0.5 * jnp.eye(6)[:3]), jd.Gaussian.isotropic(3, 1.0)),
+    "Poisson": lambda: jd.Poisson(jd.Linear(0.3 * jnp.eye(6)[:3], offset=0.5)),
 }
+
+
+def test_every_public_component_is_covered():
+    public = set(jd.dynamics.__all__) | {"Linear", "Selector", "Elementwise", "Function", "Gaussian", "StudentT",
+                                          "Cauchy", "Laplace", "GaussianMixture", "PointMass", "Additive",
+                                          "Multiplicative", "Poisson"}
+    assert public == set(MAPS) | set(LAWS) | set(CONDITIONAL)
+    assert public <= set(jd.__all__)
 
 
 def test_user_written_components_plug_in_without_subclassing():
-    class Drift:  # a minimal user dynamics: three members, no base class
-        dim = 2
-        geometry = jax_da.Unstructured(2)
+    class Drift:  # a user map: in_dim, dim, __call__
+        in_dim = dim = 2
 
-        def flow(self, x):
+        def __call__(self, x):
             return 0.9 * x
 
-    assert isinstance(Drift(), Dynamics)
-    ssm = jax_da.StateSpaceModel(Drift(), jax_da.Selector(2, (0,)), jax_da.Gaussian.isotropic(1, 0.1), jnp.ones(2))
-    assert ssm.simulate(jax.random.PRNGKey(0), 3).states.shape == (3, 2)
+    class SignObservation:  # a user conditional law: y = sign(x_0) with probability 0.9
+        in_dim, dim = 2, 1
+
+        def mean(self, x):
+            return 0.8 * jnp.sign(x[..., :1])
+
+        def sample(self, key, x):
+            flip = jax.random.bernoulli(key, 0.1, x.shape[:-1] + (1,))
+            return jnp.where(flip, -1.0, 1.0) * jnp.sign(x[..., :1])
+
+        def log_prob(self, y, x):
+            agree = (y[..., 0] == jnp.sign(x[..., 0]))
+            return jnp.where(agree, jnp.log(0.9), jnp.log(0.1))
+
+    assert isinstance(Drift(), Map) and isinstance(SignObservation(), ConditionalLaw)
+    ssm = jd.StateSpaceModel(jd.Gaussian.isotropic(2, 1.0), jd.Additive(Drift(), jd.Gaussian.isotropic(2, 0.1)),
+                             SignObservation())
+    traj = ssm.simulate(jax.random.PRNGKey(0), 3)
+    assert traj.states.shape == (3, 2) and ssm.log_likelihood(traj.observations, traj.states).shape == (3,)
 
 
-def dynamics_params():
-    return [pytest.param(name, marks=pytest.mark.pde) if name in PDE else name for name in DYNAMICS]
+def map_params():
+    return [pytest.param(name, marks=pytest.mark.pde) if name in PDE else name for name in MAPS]
 
 
-def test_every_public_object_is_covered():
-    public = set(jax_da.dynamics.__all__) | {"Gaussian", "StudentT", "Cauchy", "Laplace", "GaussianMixture",
-                                              "Selector", "Linear", "Elementwise", "FunctionOperator"}
-    assert public == set(DYNAMICS) | set(NOISE) | set(OPERATORS)
-
-
-@pytest.mark.parametrize("name", dynamics_params())
-def test_dynamics_contract(name):
+@pytest.mark.parametrize("name", map_params())
+def test_map_contract(name):
     if name in PDE:
         pytest.importorskip("exponax")
-    model = DYNAMICS[name]()
-    assert isinstance(model, Dynamics) and isinstance(model.geometry, Geometry)
-    D = model.dim
-    assert model.geometry.dim == D
-    x = 0.1 * jax.random.normal(jax.random.PRNGKey(0), (2, 3, D))
-    assert model.flow(x).shape == (2, 3, D)
-    assert jnp.allclose(jax.jit(lambda m, v: m.flow(v))(model, x), model.flow(x), rtol=1e-6, atol=1e-8)
+    f = MAPS[name]()
+    assert isinstance(f, Map)
+    x = 0.1 * jax.random.normal(jax.random.PRNGKey(0), (2, 3, f.in_dim))
+    assert f(x).shape == (2, 3, f.dim)
+    assert jnp.allclose(jax.jit(lambda m, v: m(v))(f, x), f(x), rtol=1e-6, atol=1e-8)
     with pytest.raises(ValueError):
-        model.flow(jnp.zeros(D + 1))
-    if hasattr(model, "initial_condition"):
-        assert model.initial_condition(jax.random.PRNGKey(1)).shape == (D,)
+        f(jnp.zeros(f.in_dim + 1))
+    if hasattr(f, "geometry"):
+        assert isinstance(f.geometry, Geometry) and f.geometry.dim == f.dim
+    if hasattr(f, "initial_condition"):
+        assert f.initial_condition(jax.random.PRNGKey(1)).shape == (f.dim,)
 
 
-@pytest.mark.parametrize("name", NOISE)
-def test_noise_contract(name):
-    law = NOISE[name]()
-    assert isinstance(law, NoiseLaw)
+@pytest.mark.parametrize("name", LAWS)
+def test_law_contract(name):
+    law = LAWS[name]()
+    assert isinstance(law, Law)
     draws = law.sample(jax.random.PRNGKey(0), (4, 2))
     assert draws.shape == (4, 2, 3)
+    assert name == "Cauchy" or law.cov().shape == (3, 3)
+    if name == "PointMass":
+        with pytest.raises(ValueError):
+            law.log_prob(draws)
+        return
     assert law.log_prob(draws).shape == (4, 2)
-    assert jnp.allclose(jax.jit(lambda l, e: l.log_prob(e))(law, draws), law.log_prob(draws))
+    assert jnp.allclose(jax.jit(lambda l, v: l.log_prob(v))(law, draws), law.log_prob(draws))
     with pytest.raises(ValueError):
         law.log_prob(jnp.zeros((4, 2)))
 
 
-@pytest.mark.parametrize("name", OPERATORS)
-def test_operator_contract(name):
-    op = OPERATORS[name]()
-    assert isinstance(op, ObservationOperator)
-    x = jax.random.normal(jax.random.PRNGKey(0), (5, op.in_dim))
-    assert op.apply(x).shape == (5, op.dim)
-    assert jnp.allclose(jax.jit(lambda o, v: o.apply(v))(op, x), op.apply(x))
-    assert jax.jacfwd(op.apply)(x[0]).shape == (op.dim, op.in_dim)
+@pytest.mark.parametrize("name", CONDITIONAL)
+def test_conditional_law_contract(name):
+    law = CONDITIONAL[name]()
+    assert isinstance(law, ConditionalLaw)
+    x = jax.random.normal(jax.random.PRNGKey(0), (4, 2, law.in_dim))
+    out = law.sample(jax.random.PRNGKey(1), x)
+    assert out.shape == (4, 2, law.dim) and law.mean(x).shape == (4, 2, law.dim)
+    assert law.log_prob(out, x).shape == (4, 2)
+    assert jnp.allclose(jax.jit(lambda l, o, v: l.log_prob(o, v))(law, out, x), law.log_prob(out, x))
     with pytest.raises(ValueError):
-        op.apply(jnp.zeros(op.in_dim + 1))
+        law.log_prob(jnp.zeros((4, 2, law.dim + 1)), x)

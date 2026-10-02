@@ -12,7 +12,7 @@ from jax_da.geometry import Unstructured
 
 @struct.dataclass
 class Lorenz96TwoScale:
-    """Two-scale Lorenz-96 flow over one interval ``dt``, integrated with RK4.
+    """Two-scale Lorenz-96 one-interval map over ``dt``, integrated with RK4.
 
         dX_k/dt   = (X_{k+1} - X_{k-2}) X_{k-1} - X_k + F - (h c / b) sum_j Y_{j,k}
         dY_{j,k}/dt = c b Y_{j+1,k} (Y_{j-1,k} - Y_{j+2,k}) - c Y_{j,k} + (h c / b) X_k
@@ -59,7 +59,11 @@ class Lorenz96TwoScale:
               + coupling * jnp.repeat(X, self.n_fast, axis=-1))
         return jnp.concatenate([dX, dY], axis=-1)
 
-    def flow(self, x: Array) -> Array:
+    @property
+    def in_dim(self) -> int:
+        return self.dim
+
+    def __call__(self, x: Array) -> Array:
         """State after one interval ``dt``, ``(..., K + K J) -> (..., K + K J)``."""
         check_event_shape(x, (self.dim,))
         return rk4(self.rhs, x, self.dt, self.substeps)
@@ -72,5 +76,5 @@ class Lorenz96TwoScale:
         return jnp.concatenate([X, Y])
 
     def spinup(self, x: Array, n_steps: int) -> Array:
-        """Apply ``flow`` ``n_steps`` times."""
-        return spin(self.flow, x, n_steps)
+        """Apply the one-interval map ``n_steps`` times."""
+        return spin(self, x, n_steps)

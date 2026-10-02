@@ -1,10 +1,11 @@
 """Exact answers for linear-Gaussian state-space models.
 
-A ``StateSpaceModel`` is linear-Gaussian when its dynamics expose ``matrix``
-(``LinearDynamics``), its observation operator exposes ``matrix`` (``Selector``
-or ``Linear``), and its initial, model, and observation noise laws are
-``Gaussian`` or None. For such a model the filtering and smoothing
-distributions are Gaussian and the Kalman recursions compute them exactly.
+A ``StateSpaceModel`` is linear-Gaussian when its transition and observation
+are ``Additive`` with a ``Linear`` or ``Selector`` map and ``Gaussian`` noise
+(or no noise), and its initial law is ``Gaussian`` or ``PointMass``. Affine
+offsets (``Linear.offset`` and a noise ``loc``) are allowed. For such a model
+the filtering and smoothing distributions are Gaussian and the Kalman
+recursions compute them exactly.
 Use float64 (``jax_enable_x64``) when comparing a method against the oracle.
 """
 
@@ -14,7 +15,9 @@ from flax import struct
 from jax import Array
 from jax.scipy.linalg import cho_factor, cho_solve
 
-from jax_da.noise import Gaussian
+from jax_da.conditional import Additive
+from jax_da.laws import Gaussian, PointMass
+from jax_da.maps import Linear, Selector
 from jax_da.ssm import StateSpaceModel
 
 
@@ -50,12 +53,16 @@ class SmootherResult:
     covs: Array
 
 
-def _gaussian_cov(law, dim):
-    if law is None:
-        return jnp.zeros((dim, dim))
-    if not isinstance(law, Gaussian):
-        raise ValueError(f"KalmanOracle needs Gaussian noise, got {type(law).__name__}")
-    return law.cov()
+def _affine_gaussian(law, name):
+    """``(matrix, offset, cov)`` of an ``Additive`` law with a linear map and Gaussian (or no) noise."""
+    if not isinstance(law, Additive) or not isinstance(law.map, (Linear, Selector)):
+        raise ValueError(f"KalmanOracle needs the {name} to be Additive with a Linear or Selector map")
+    offset = jnp.broadcast_to(getattr(law.map, "offset", 0.0), (law.dim,))
+    if law.noise is None:
+        return law.map.matrix, offset, jnp.zeros((law.dim, law.dim))
+    if not isinstance(law.noise, Gaussian):
+        raise ValueError(f"KalmanOracle needs Gaussian {name} noise, got {type(law.noise).__name__}")
+    return law.map.matrix, offset + law.noise.loc, law.noise.cov()
 
 
 @struct.dataclass
@@ -64,9 +71,12 @@ class KalmanOracle:
 
     Build with ``KalmanOracle.from_ssm(ssm)``.
 
+    The model is ``x_t = A x_{t-1} + b + eta_t``, ``y_t = H x_t + c + eps_t``,
+    ``eta_t ~ N(0, Q)``, ``eps_t ~ N(0, R)``, ``x_0 ~ N(m0, P0)``.
+
     Attributes:
-        A: Dynamics matrix ``(D, D)``.
-        H: Observation matrix ``(p, D)``.
+        A, b: Transition matrix ``(D, D)`` and offset ``(D,)``.
+        H, c: Observation matrix ``(p, D)`` and offset ``(p,)``.
         Q: Model-error covariance ``(D, D)`` (zero if deterministic).
         R: Observation-noise covariance ``(p, p)``.
         m0: Initial mean ``(D,)``.
@@ -74,7 +84,9 @@ class KalmanOracle:
     """
 
     A: Array
+    b: Array
     H: Array
+    c: Array
     Q: Array
     R: Array
     m0: Array
@@ -87,29 +99,24 @@ class KalmanOracle:
         Raises:
             ValueError: If ``ssm`` is not linear-Gaussian.
         """
-        D = ssm.state_dim
-        if not hasattr(ssm.dynamics, "matrix") or not hasattr(ssm.obs_operator, "matrix"):
-            raise ValueError("KalmanOracle needs linear dynamics and a linear observation operator")
-        return cls(
-            A=ssm.dynamics.matrix,
-            H=ssm.obs_operator.matrix,
-            Q=_gaussian_cov(ssm.model_error, D),
-            R=_gaussian_cov(ssm.obs_noise, ssm.obs_dim),
-            m0=jnp.asarray(ssm.initial_mean),
-            P0=_gaussian_cov(ssm.initial_noise, D),
-        )
+        A, b, Q = _affine_gaussian(ssm.transition, "transition")
+        H, c, R = _affine_gaussian(ssm.observation, "observation")
+        if not isinstance(ssm.initial, (Gaussian, PointMass)):
+            raise ValueError(f"KalmanOracle needs a Gaussian or PointMass initial law, got {type(ssm.initial).__name__}")
+        m0 = jnp.broadcast_to(ssm.initial.loc, (ssm.state_dim,))
+        return cls(A=A, b=b, H=H, c=c, Q=Q, R=R, m0=m0, P0=ssm.initial.cov())
 
     def filter(self, observations: Array) -> FilterResult:
         """Kalman filter over ``y_1..y_T``, shape ``(T, p)``."""
-        A, H, Q, R = self.A, self.H, self.Q, self.R
+        A, b, H, c, Q, R = self.A, self.b, self.H, self.c, self.Q, self.R
 
         def step(carry, y):
             m, P, log_ev = carry
-            m_pred = A @ m
+            m_pred = A @ m + b
             P_pred = A @ P @ A.T + Q
             S = H @ P_pred @ H.T + R
             chol = cho_factor(S, lower=True)
-            innovation = y - H @ m_pred
+            innovation = y - H @ m_pred - c
             K = cho_solve(chol, H @ P_pred).T
             m_new = m_pred + K @ innovation
             P_new = P_pred - K @ S @ K.T

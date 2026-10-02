@@ -42,3 +42,12 @@ def test_function_defined_model_is_filtered_by_the_generic_particle_filter():
 
     rmse, truth_std = run(2000, n_steps=100)
     assert rmse < 0.5 * truth_std  # positive control: assimilation must beat the climatological spread
+
+
+def test_generic_particle_filter_runs_on_non_additive_observation_models():
+    # Positive control: on stochastic volatility and Poisson counts the filter must beat the truth's spread.
+    for ssm in (jax_da.problems.stochastic_volatility(), jax_da.problems.nonlinear_poisson()):
+        traj = ssm.simulate(jax.random.PRNGKey(0), 200)
+        means, log_ev = jax.jit(bootstrap_pf, static_argnums=3)(ssm, traj.observations, jax.random.PRNGKey(1), 2000)
+        rmse = float(jnp.sqrt(((means - traj.states) ** 2).mean()))
+        assert np.isfinite(float(log_ev)) and rmse < 0.75 * float(traj.states.std())

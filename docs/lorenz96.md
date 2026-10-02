@@ -14,7 +14,7 @@ One time unit corresponds to roughly 5 days of atmospheric error growth, so `dt 
 import jax_da
 
 model = jax_da.Lorenz96(dim=40, dt=0.05, forcing=8.0)
-x1 = model.flow(x0)                     # (..., 40) -> (..., 40), RK4 with `substeps` steps
+x1 = model(x0)                          # a map: (..., 40) -> (..., 40), RK4 with `substeps` steps
 model.geometry.distances(indices)       # Ring(40): wrapped distances for localization
 ```
 

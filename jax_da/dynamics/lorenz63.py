@@ -12,7 +12,7 @@ from jax_da.geometry import Unstructured
 
 @struct.dataclass
 class Lorenz63:
-    """Lorenz-63 flow over one interval ``dt``, integrated with RK4.
+    """Lorenz-63 one-interval map over ``dt``, integrated with RK4.
 
     ``dx/dt = sigma (y - x)``, ``dy/dt = x (rho - z) - y``, ``dz/dt = x y - beta z``.
     The classical parameters ``(10, 28, 8/3)`` give the butterfly attractor.
@@ -41,7 +41,11 @@ class Lorenz63:
         u, v, w = x[..., 0], x[..., 1], x[..., 2]
         return jnp.stack([self.sigma * (v - u), u * (self.rho - w) - v, u * v - self.beta * w], axis=-1)
 
-    def flow(self, x: Array) -> Array:
+    @property
+    def in_dim(self) -> int:
+        return self.dim
+
+    def __call__(self, x: Array) -> Array:
         """State after one interval ``dt``, ``(..., 3) -> (..., 3)``."""
         check_event_shape(x, (3,))
         return rk4(self.rhs, x, self.dt, self.substeps)
@@ -51,5 +55,5 @@ class Lorenz63:
         return jnp.ones(3) + 0.1 * jax.random.normal(key, (3,))
 
     def spinup(self, x: Array, n_steps: int) -> Array:
-        """Apply ``flow`` ``n_steps`` times."""
-        return spin(self.flow, x, n_steps)
+        """Apply the one-interval map ``n_steps`` times."""
+        return spin(self, x, n_steps)

@@ -22,22 +22,22 @@ def test_kolmogorov_mean_vorticity_decays_by_the_drag():
     m = KolmogorovFlow(resolution=32)
     x = m.initial_condition(jax.random.PRNGKey(1)) + 0.2
     mean0 = float(x.mean())
-    np.testing.assert_allclose(float(m.flow(x).mean()), mean0 * np.exp(m.drag * m.dt), rtol=1e-4)
+    np.testing.assert_allclose(float(m(x).mean()), mean0 * np.exp(m.drag * m.dt), rtol=1e-4)
 
 
 @pytest.mark.parametrize("model", [KuramotoSivashinsky(num_points=64), KolmogorovFlow(resolution=16)])
 def test_batched_flow_matches_member_by_member(model):
     x = jax.random.normal(jax.random.PRNGKey(2), (2, 3, model.dim)) * 0.5
-    batched = model.flow(x)
+    batched = model(x)
     assert batched.shape == x.shape
-    np.testing.assert_allclose(batched[1, 2], model.flow(x[1, 2]), rtol=1e-9, atol=1e-9)
+    np.testing.assert_allclose(batched[1, 2], model(x[1, 2]), rtol=1e-9, atol=1e-9)
 
 
 def test_stepper_first_built_inside_jit_does_not_leak_tracers():
     model = KuramotoSivashinsky(num_points=48)  # a configuration no other test builds
     x = model.initial_condition(jax.random.PRNGKey(3))
-    traced = jax.jit(model.flow)(x)
-    np.testing.assert_allclose(model.flow(x), traced, rtol=1e-9, atol=1e-9)
+    traced = jax.jit(lambda v: model(v))(x)
+    np.testing.assert_allclose(model(x), traced, rtol=1e-9, atol=1e-9)
 
 
 @pytest.mark.parametrize("short, long", [
@@ -47,7 +47,7 @@ def test_stepper_first_built_inside_jit_does_not_leak_tracers():
 def test_flow_over_dt_equals_two_flows_over_half_dt(short, long):
     # Catches a wrong inner step count: the flow must integrate exactly dt.
     x = short.initial_condition(jax.random.PRNGKey(5))
-    np.testing.assert_allclose(short.flow(short.flow(x)), long.flow(x), rtol=1e-8, atol=1e-8)
+    np.testing.assert_allclose(short(short(x)), long(x), rtol=1e-8, atol=1e-8)
 
 
 def test_dt_must_be_a_multiple_of_the_inner_step():
