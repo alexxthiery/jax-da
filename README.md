@@ -9,7 +9,7 @@ Everything traces under `jit`, `vmap`, and `grad`.
 ## Installation
 
 ```bash
-git clone <repository-url> jax-da
+git clone https://github.com/alexxthiery/jax-da.git
 cd jax-da
 pip install -e '.[dev]'        # add ,pde for Kuramoto-Sivashinsky and Kolmogorov flow (Exponax)
 ```
