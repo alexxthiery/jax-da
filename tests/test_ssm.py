@@ -36,6 +36,16 @@ def test_densities_match_hand_gaussian_formulas():
     assert float(ssm.log_initial_density(x)) == pytest.approx(normal_logpdf(x - ssm.initial_mean, 1.0))
 
 
+def test_sample_initial_moments_and_point_mass():
+    ssm = linear_ssm()
+    draws = ssm.sample_initial(jax.random.PRNGKey(4), (100_000,))
+    np.testing.assert_allclose(draws.mean(0), ssm.initial_mean, atol=0.015)
+    np.testing.assert_allclose(np.cov(np.asarray(draws).T), np.eye(4), atol=0.02)
+    known = ssm.replace(initial_noise=None)
+    np.testing.assert_array_equal(known.sample_initial(jax.random.PRNGKey(4), (3,)),
+                                  jnp.broadcast_to(ssm.initial_mean, (3, 4)))
+
+
 def test_sample_transition_moments():
     ssm = linear_ssm()
     x = jnp.array([1.0, 2.0, -1.0, 0.5])
