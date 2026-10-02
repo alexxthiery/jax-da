@@ -18,7 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 pde = ["exponax>=0.2"]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "scipy>=1.10"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["jax_da"]
