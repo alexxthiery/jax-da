@@ -8,6 +8,7 @@ For the Jacobian of any operator use `jax.jacfwd(op.apply)`.
 | `Selector(in_dim, indices)`, `Selector.every(in_dim, stride, offset=0)` | `x[indices]` | `indices` (static tuple), `matrix` |
 | `Linear(matrix)`, `Linear.random_orthonormal(key, in_dim, dim, row_scale_span=0.25)` | $H x$ | `matrix` |
 | `Elementwise(base, kind, degree=3)` | $g(\text{base}(x))$ | `base`, `g` |
+| `FunctionOperator(fn, in_dim, dim)` | `fn(x)` for any JAX function of one state | `fn`; see [function_models.md](function_models.md) |
 
 `Linear.random_orthonormal` returns orthonormal rows scaled by values spread linearly over $[1 - s, 1 + s]$: dense, well conditioned, and not exactly isometric.
 

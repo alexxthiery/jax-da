@@ -35,3 +35,10 @@ def test_enkf_tracks_lorenz96_below_the_observation_noise():
     rmse = float(jax_da.metrics.rmse(analyses, traj.states)[100:].mean())
     assert rmse < 0.4  # observation noise std is 1.0
     assert 0.7 < float(jax_da.metrics.spread_skill_ratio(analyses[100:], traj.states[100:])) < 1.3
+
+
+def test_function_defined_model_is_filtered_by_the_generic_particle_filter():
+    from custom_model import run
+
+    rmse, truth_std = run(2000, n_steps=100)
+    assert rmse < 0.5 * truth_std  # positive control: assimilation must beat the climatological spread

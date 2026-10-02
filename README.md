@@ -38,7 +38,8 @@ _, free_run = jax.lax.scan(step, ensemble, jax.random.split(key, 200))
 print(jax_da.metrics.rmse(free_run, traj.states).mean())
 ```
 
-Complete algorithms written against this interface are in [examples/](examples/): a bootstrap particle filter checked against the Kalman oracle, and a stochastic EnKF on Lorenz-96.
+Complete algorithms written against this interface are in [examples/](examples/): a bootstrap particle filter checked against the Kalman oracle, a stochastic EnKF on Lorenz-96, and the same particle filter on a nonlinear model defined by two plain functions.
+Any model $x_{t+1} = F(x_t) + \eta_t$, $y_t = h(x_t) + \varepsilon_t$ can be built from JAX functions $F$ and $h$: [docs/function_models.md](docs/function_models.md).
 
 ## Unified interface
 
@@ -71,6 +72,7 @@ A model is assembled from dynamics, an observation operator, and noise laws; eac
 
 | Dynamics | State dimension | Geometry | Docs |
 |----------|-----------------|----------|------|
+| `FunctionDynamics` | configurable | optional | [docs/function_models.md](docs/function_models.md) |
 | `LinearDynamics` | configurable | none | [docs/linear.md](docs/linear.md) |
 | `Lorenz63` | 3 | none | [docs/lorenz63.md](docs/lorenz63.md) |
 | `Lorenz96` | configurable | ring | [docs/lorenz96.md](docs/lorenz96.md) |
@@ -83,7 +85,7 @@ Every dynamics has `dim`, `geometry`, and `flow(x)` over one interval; the chaot
 
 ## Observations and noise
 
-- Operators ([docs/observations.md](docs/observations.md)): `Selector`, `Linear`, and nonlinear `Elementwise` (polynomial or arctan of a linear map).
+- Operators ([docs/observations.md](docs/observations.md)): `Selector`, `Linear`, nonlinear `Elementwise` (polynomial or arctan of a linear map), and `FunctionOperator` for any JAX function.
 - Noise laws ([docs/noise.md](docs/noise.md)): `Gaussian` (isotropic, diagonal, or full), `StudentT`, `Cauchy`, `Laplace`, `GaussianMixture`, each with `sample`, `log_prob`, and `cov`.
 
 ## Presets

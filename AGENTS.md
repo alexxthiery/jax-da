@@ -35,10 +35,10 @@ jax_da/
   __init__.py           re-exports the public API
   protocols.py          Dynamics, NoiseLaw, ObservationOperator, Geometry contracts
   ssm.py                StateSpaceModel, Trajectory
-  dynamics/             one file per system: linear, lorenz63, lorenz96, lorenz96_two_scale,
+  dynamics/             one file per system: function (wraps any JAX map), linear, lorenz63, lorenz96, lorenz96_two_scale,
                         ks, kolmogorov; _integrate (RK4, spin-up), _exponax (cached steppers)
   noise.py              Gaussian, StudentT, Cauchy, Laplace, GaussianMixture
-  observations.py       Selector, Linear, Elementwise
+  observations.py       Selector, Linear, Elementwise, FunctionOperator
   geometry.py           Unstructured, Ring, Torus2D
   metrics.py            ensemble scores
   oracles.py            KalmanOracle

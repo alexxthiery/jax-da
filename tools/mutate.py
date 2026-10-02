@@ -41,7 +41,7 @@ MUTANTS = [
     ("M17 oracle evidence logdet", "oracles.py", "+ log_det + y.shape[0]", "+ y.shape[0]", False),
     ("M18 oracle smoother gain", "oracles.py", "G = jnp.linalg.solve(P_pred_next, A @ P).T", "G = jnp.linalg.solve(P_pred_next, A @ P)", False),
     ("M19 oracle ignores Q", "oracles.py", "P_pred = A @ P @ A.T + Q", "P_pred = A @ P @ A.T", False),
-    ("M20 KS inner steps", "dynamics/ks.py", "round(self.dt / self.dt_inner), (self.num_points,)", "round(self.dt / self.dt_inner) - 1, (self.num_points,)", True),
+    ("M20 PDE inner step count", "dynamics/_exponax.py", "    return round(n)\n", "    return round(n) - 1\n", True),
     ("M21 Kolmogorov drag sign", "dynamics/kolmogorov.py", "drag=self.drag,", "drag=-self.drag,", True),
     ("M22 preset ignores obs_every", "problems.py", "Selector.every(dim, obs_every), obs_std", "Selector.every(dim, 1), obs_std", False),
     ("M23 transition noise dropped", "ssm.py", "return mean + self.model_error.sample(key, mean.shape[:-1])", "return mean", False),
@@ -49,6 +49,7 @@ MUTANTS = [
     ("M26 climatology missing 1/(1-|a|^2)", "problems.py", "sigma = q / (1 - np.abs(a) ** 2)", "sigma = q", False),
     ("M27 advection direction flipped", "problems.py", "np.exp(-1j * c * ki * dt))", "np.exp(1j * c * ki * dt))", False),
     ("M28 Nyquist translation factor 1", "problems.py", "np.where(nyquist, np.cos(c * ki * dt),", "np.where(nyquist, 1.0,", False),
+    ("M29 FunctionDynamics not vectorized", "dynamics/function.py", "out = jnp.vectorize(self.fn, signature=\"(d)->(e)\")(x)", "out = self.fn(x)", False),
     ("M25 oracle drops Q correlations", "oracles.py", "P_pred = A @ P @ A.T + Q", "P_pred = A @ P @ A.T + jnp.diag(jnp.diag(Q))", False),
 ]
 

@@ -13,6 +13,7 @@ DYNAMICS = {
     "Lorenz96TwoScale": lambda: jax_da.Lorenz96TwoScale(n_slow=4, n_fast=3),
     "KuramotoSivashinsky": lambda: jax_da.KuramotoSivashinsky(num_points=32),
     "KolmogorovFlow": lambda: jax_da.KolmogorovFlow(resolution=8),
+    "FunctionDynamics": lambda: jax_da.FunctionDynamics(lambda x: x + 0.1 * jnp.sin(x[::-1]), 4),
 }
 PDE = {"KuramotoSivashinsky", "KolmogorovFlow"}
 NOISE = {
@@ -26,6 +27,7 @@ OPERATORS = {
     "Selector": lambda: jax_da.Selector.every(6, 2),
     "Linear": lambda: jax_da.Linear.random_orthonormal(jax.random.PRNGKey(0), 6, 3),
     "Elementwise": lambda: jax_da.Elementwise(jax_da.Selector.every(6, 2), "arctan"),
+    "FunctionOperator": lambda: jax_da.FunctionOperator(lambda x: jnp.tanh(x[:3] * x[3:]), 6, 3),
 }
 
 
@@ -48,7 +50,7 @@ def dynamics_params():
 
 def test_every_public_object_is_covered():
     public = set(jax_da.dynamics.__all__) | {"Gaussian", "StudentT", "Cauchy", "Laplace", "GaussianMixture",
-                                              "Selector", "Linear", "Elementwise"}
+                                              "Selector", "Linear", "Elementwise", "FunctionOperator"}
     assert public == set(DYNAMICS) | set(NOISE) | set(OPERATORS)
 
 

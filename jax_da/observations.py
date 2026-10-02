@@ -6,6 +6,8 @@ Every operator has ``in_dim`` (D), ``dim`` (p), and ``apply(x)`` mapping
 operator use ``jax.jacfwd(op.apply)``.
 """
 
+from typing import Callable
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -132,3 +134,29 @@ class Elementwise:
 
     def apply(self, x: Array) -> Array:
         return self.g(self.base.apply(x))
+
+
+@struct.dataclass
+class FunctionOperator:
+    """Wrap ``fn: (D,) -> (p,)``, any JAX function of a single state, as an observation operator.
+
+    ``apply`` maps it over any leading batch axes with ``jnp.vectorize``. ``fn``
+    is static: the operator passes through ``jit`` and ``vmap``, and values
+    captured by its closure are compile-time constants. Jacobians:
+    ``jax.jacfwd(op.apply)``.
+
+    Attributes:
+        fn: Observation map of a single state (static).
+        in_dim: State dimension ``D`` (static).
+        dim: Observation dimension ``p`` (static).
+    """
+
+    fn: Callable[[Array], Array] = struct.field(pytree_node=False)
+    in_dim: int = struct.field(pytree_node=False)
+    dim: int = struct.field(pytree_node=False)
+
+    def apply(self, x: Array) -> Array:
+        check_event_shape(x, (self.in_dim,))
+        out = jnp.vectorize(self.fn, signature="(d)->(p)")(x)
+        check_event_shape(out, (self.dim,), "fn(x)")
+        return out

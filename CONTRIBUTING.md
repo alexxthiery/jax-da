@@ -2,6 +2,8 @@
 
 ## Adding a dynamics
 
+For a one-off model, wrap a JAX function with `FunctionDynamics` (see `docs/function_models.md`); write a class when the model should expose structure or have differentiable parameters.
+
 1. Create `jax_da/dynamics/<name>.py` with a `flax.struct.dataclass` satisfying `jax_da.protocols.Dynamics`; `lorenz96.py` is the template.
    - Fields: numeric parameters are pytree children (they can be swept with `vmap` and differentiated); sizes, `substeps`, and anything that sets a loop count or a solver are `struct.field(pytree_node=False)`.
    - Members: `dim` and `geometry` properties, `flow(x)` over one interval starting with `check_event_shape(x, (self.dim,))`, and for chaotic systems `initial_condition(key)` and `spinup(x, n_steps)`.

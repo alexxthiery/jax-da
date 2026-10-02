@@ -36,9 +36,7 @@ class KuramotoSivashinsky:
     order: int = struct.field(pytree_node=False, default=2)
 
     def __post_init__(self):
-        n = self.dt / self.dt_inner
-        if abs(n - round(n)) > 1e-9 or round(n) < 1:
-            raise ValueError(f"dt={self.dt} must be a positive multiple of dt_inner={self.dt_inner}")
+        _exponax.inner_steps(self.dt, self.dt_inner)
 
     @property
     def dim(self) -> int:
@@ -56,7 +54,7 @@ class KuramotoSivashinsky:
     def flow(self, x: Array) -> Array:
         """Field after one interval ``dt``, ``(..., num_points) -> (..., num_points)``."""
         check_event_shape(x, (self.dim,))
-        return _exponax.apply_steps(self._stepper(), x, round(self.dt / self.dt_inner), (self.num_points,))
+        return _exponax.apply_steps(self._stepper(), x, _exponax.inner_steps(self.dt, self.dt_inner), (self.num_points,))
 
     def initial_condition(self, key: Array) -> Array:
         """``cos(2 x / L) (1 + sin(2 x / L))`` plus ``N(0, 0.01^2)``; spin up to reach the attractor."""

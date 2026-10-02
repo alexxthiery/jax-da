@@ -40,9 +40,7 @@ class KolmogorovFlow:
     dt_inner: float = struct.field(pytree_node=False, default=0.01)
 
     def __post_init__(self):
-        n = self.dt / self.dt_inner
-        if abs(n - round(n)) > 1e-9 or round(n) < 1:
-            raise ValueError(f"dt={self.dt} must be a positive multiple of dt_inner={self.dt_inner}")
+        _exponax.inner_steps(self.dt, self.dt_inner)
 
     @property
     def dim(self) -> int:
@@ -61,7 +59,7 @@ class KolmogorovFlow:
     def flow(self, x: Array) -> Array:
         """Vorticity after one interval ``dt``, ``(..., resolution**2) -> (..., resolution**2)``."""
         check_event_shape(x, (self.dim,))
-        return _exponax.apply_steps(self._stepper(), x, round(self.dt / self.dt_inner),
+        return _exponax.apply_steps(self._stepper(), x, _exponax.inner_steps(self.dt, self.dt_inner),
                                     (self.resolution, self.resolution))
 
     def initial_condition(self, key: Array) -> Array:
