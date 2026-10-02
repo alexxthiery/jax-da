@@ -4,7 +4,7 @@ A suite that passes on buggy code is decorative. Each mutant below is a
 realistic mistake (off-by-one, wrong sign, dropped term, swapped axis); the
 suite runs on a temporary copy of the repository with that one change.
 
-    python tools/mutate.py            # all mutants, about 10 minutes
+    python tools/mutate.py            # all mutants: one test-suite run each
     python tools/mutate.py M03 M20    # selected mutants
 
 Every mutant must be KILLED. A mutant whose pattern no longer matches the

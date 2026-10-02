@@ -21,7 +21,7 @@ python -m pytest
 # Exponax-backed models
 python -m pytest -m pde
 
-# Mutation check: every plausible bug in tools/mutate.py must be KILLED (about 10 minutes)
+# Mutation check: every plausible bug in tools/mutate.py must be KILLED (one test-suite run per mutant)
 python tools/mutate.py
 
 # Editable install (needed to run examples/ directly)

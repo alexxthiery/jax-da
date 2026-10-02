@@ -60,7 +60,9 @@ ssm = jd.StateSpaceModel(
 ```
 
 States are flat, `(..., D)`; leading axes are batch axes, so ensembles need no special handling.
-Wrong trailing shapes raise `ValueError`.
+
+Mistakes fail early and loud: wrong shapes, non-positive scales, non-symmetric or non-definite covariances, invalid counts, and NaN inputs raise `ValueError` with a message naming the problem, instead of returning NaN or a plausible wrong answer.
+Shapes are checked everywhere; values are checked whenever they are concrete, that is outside `jit` ([docs/design.md](docs/design.md#decisions)).
 
 | Method | Shapes | Returns |
 |--------|--------|---------|
