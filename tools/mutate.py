@@ -46,6 +46,7 @@ MUTANTS = [
     ("M22 preset ignores obs_every", "problems.py", "Selector.every(dim, obs_every), obs_std", "Selector.every(dim, 1), obs_std", False),
     ("M23 transition noise dropped", "ssm.py", "return mean + self.model_error.sample(key, mean.shape[:-1])", "return mean", False),
     ("M24 energy score half", "metrics.py", "return term1 - 0.5 * term2", "return term1 - term2", False),
+    ("M25 oracle drops Q correlations", "oracles.py", "P_pred = A @ P @ A.T + Q", "P_pred = A @ P @ A.T + jnp.diag(jnp.diag(Q))", False),
 ]
 
 

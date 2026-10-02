@@ -7,7 +7,7 @@ It is the reference for testing a method on the one model class where the answer
 import jax
 jax.config.update("jax_enable_x64", True)   # compare methods to the oracle in float64
 
-ssm = jax_da.problems.linear_gaussian()
+ssm = jax_da.problems.linear_gaussian_full()    # dense A and H, full Q, R, P0
 traj = ssm.simulate(key, 50)
 oracle = jax_da.KalmanOracle.from_ssm(ssm)
 f = oracle.filter(traj.observations)        # FilterResult

@@ -9,6 +9,7 @@ The same arguments always give the same model.
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from jax_da.dynamics.kolmogorov import KolmogorovFlow
 from jax_da.dynamics.ks import KuramotoSivashinsky
@@ -17,7 +18,7 @@ from jax_da.dynamics.lorenz63 import Lorenz63
 from jax_da.dynamics.lorenz96 import Lorenz96
 from jax_da.dynamics.lorenz96_two_scale import Lorenz96TwoScale
 from jax_da.noise import Gaussian
-from jax_da.observations import Selector
+from jax_da.observations import Linear, Selector
 from jax_da.ssm import StateSpaceModel
 
 
@@ -48,6 +49,48 @@ def linear_gaussian(dim: int = 4, obs_every: int = 2, obs_std: float = 0.5, mode
         initial_mean=jnp.zeros(dim),
         initial_noise=Gaussian.isotropic(dim, initial_std),
         model_error=Gaussian.isotropic(dim, model_error_std),
+    )
+
+
+def _random_covariance(rng: np.random.Generator, dim: int, std: float) -> np.ndarray:
+    """Correlated SPD matrix ``G G^T / dim + I`` rescaled so its mean variance is ``std**2``.
+
+    The identity term keeps the condition number moderate (eigenvalues of the
+    unscaled matrix lie in ``[1, (1 + 1)^2 + 1]`` asymptotically).
+    """
+    g = rng.standard_normal((dim, dim))
+    cov = g @ g.T / dim + np.eye(dim)
+    return cov * (std ** 2 / np.mean(np.diag(cov)))
+
+
+def linear_gaussian_full(state_dim: int = 6, obs_dim: int = 3, spectral_radius: float = 0.95,
+                         model_error_std: float = 0.3, obs_std: float = 0.5, initial_std: float = 1.0,
+                         seed: int = 0) -> StateSpaceModel:
+    """General linear-Gaussian model with dense ``A``, dense ``H``, and full ``Q``, ``R``, ``P0``.
+
+        x_0 ~ N(0, P0),  x_t = A x_{t-1} + eta_t,  eta_t ~ N(0, Q),  y_t = H x_t + eps_t,  eps_t ~ N(0, R)
+
+    ``A`` is a Gaussian matrix rescaled to ``spectral_radius``; ``H`` is Gaussian
+    with entries of variance ``1 / state_dim``; ``Q``, ``R``, ``P0`` are correlated
+    SPD matrices with mean variance ``model_error_std**2``, ``obs_std**2``, and
+    ``initial_std**2``. Matrices come from ``numpy.random.default_rng(seed)``, so
+    the model is identical across JAX versions and devices. Exact answers via
+    ``KalmanOracle``.
+    """
+    rng = np.random.default_rng(seed)
+    a = rng.standard_normal((state_dim, state_dim))
+    a *= spectral_radius / np.max(np.abs(np.linalg.eigvals(a)))
+    h = rng.standard_normal((obs_dim, state_dim)) / np.sqrt(state_dim)
+    q = _random_covariance(rng, state_dim, model_error_std)
+    r = _random_covariance(rng, obs_dim, obs_std)
+    p0 = _random_covariance(rng, state_dim, initial_std)
+    return StateSpaceModel(
+        dynamics=LinearDynamics(jnp.asarray(a)),
+        obs_operator=Linear(jnp.asarray(h)),
+        obs_noise=Gaussian.full(jnp.asarray(r)),
+        initial_mean=jnp.zeros(state_dim),
+        initial_noise=Gaussian.full(jnp.asarray(p0)),
+        model_error=Gaussian.full(jnp.asarray(q)),
     )
 
 

@@ -9,4 +9,4 @@ With Gaussian initial, model, and observation noise and a linear observation ope
 |-------|------|---------|
 | `matrix` | numeric | $A$, shape `(D, D)` |
 
-Preset: `jax_da.problems.linear_gaussian()`.
+Presets: `jax_da.problems.linear_gaussian()` (damped rotations, selector observations, isotropic noise) and `jax_da.problems.linear_gaussian_full()` (dense $A$ and $H$, full $Q$, $R$, $P_0$).

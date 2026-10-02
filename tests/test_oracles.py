@@ -21,8 +21,10 @@ def model(model_error=True):
         obs_operator=Linear(jnp.array([[1.0, 0.0, 0.5], [0.0, 1.0, -0.5]])),
         obs_noise=Gaussian.full(jnp.array([[0.3, 0.05], [0.05, 0.2]])),
         initial_mean=jnp.array([0.5, -1.0, 2.0]),
-        initial_noise=Gaussian.diagonal(jnp.array([1.0, 0.5, 2.0])),
-        model_error=Gaussian.isotropic(D, 0.4) if model_error else None,
+        # Full covariances everywhere, so cross-covariance terms of Q, R, and P0 are exercised.
+        initial_noise=Gaussian.full(jnp.array([[1.0, 0.3, -0.2], [0.3, 0.5, 0.1], [-0.2, 0.1, 2.0]])),
+        model_error=Gaussian.full(jnp.array([[0.16, 0.06, 0.0], [0.06, 0.2, -0.05], [0.0, -0.05, 0.1]]))
+        if model_error else None,
     )
 
 
