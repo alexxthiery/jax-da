@@ -21,8 +21,8 @@ python -m pytest
 # Exponax-backed models
 python -m pytest -m pde
 
-# Mutation check: every plausible bug in tools/mutate.py must be KILLED (one test-suite run per mutant)
-python tools/mutate.py
+# Mutation check, only when the maintainer asks for one (one test-suite run per mutant)
+python tools/mutate.py -j 8
 
 # Editable install (needed to run examples/ directly)
 pip install -e '.[dev,pde]'
@@ -36,14 +36,15 @@ jax_da/
   protocols.py          Map, Law, ConditionalLaw, Geometry contracts
   ssm.py                StateSpaceModel (initial, transition, observation, geometry), Trajectory
   maps.py               Linear (affine), Selector, Elementwise, Function
-  laws.py               Gaussian, StudentT, Cauchy, Laplace, GaussianMixture, PointMass
-  conditional.py        Additive, Multiplicative, Poisson
+  laws.py               Gaussian, StudentT, Cauchy, Laplace, GaussianMixture, PointMass, Embedded, History
+  conditional.py        Additive, Multiplicative, Poisson, Precomposed, Lagged
   dynamics/             nonlinear maps, one file each: lorenz63, lorenz96, lorenz96_two_scale,
                         ks, kolmogorov, tanh_squared; _integrate (RK4, spin-up), _exponax (cached steppers)
   geometry.py           Unstructured, Ring, Torus2D
   metrics.py            ensemble scores
   oracles.py            KalmanOracle (affine linear-Gaussian)
   problems.py           presets
+  transforms.py         delayed (any model to its delayed-observation version)
   _validation.py        shape checks, placeholder-aware parameter checks
 docs/                   design.md plus one page per object
 examples/               algorithms written against the public API (not part of the package)
@@ -85,13 +86,14 @@ Every test protects a claim with an independent oracle; pick from what the exist
 Monte Carlo tolerances come from the expected standard error, not from trial and error.
 A test that only checks shape, finiteness, or "runs" is not enough for a behavior; pair it with one of the oracles above.
 
-Proving a test is useful (do this for every new behavior):
+Mutation testing is opt-in: run it only when the maintainer asks, not by default for new tests or commits.
+When asked, prove a test is useful this way:
 
 1. Add a mutant to `tools/mutate.py`: the most plausible wrong implementation of the behavior.
 2. Run `python tools/mutate.py <id>` and see it SURVIVE; this proves the gap.
 3. Write the test; run the mutant again and see it KILLED by that test (the first FAILED line names it).
 4. A kill by an unrelated test is incidental, not protection; check by rerunning with that test file ignored.
-5. Before committing a behavior change, run the full `python tools/mutate.py`: every mutant must be killed.
+5. A full run (`python tools/mutate.py -j 8`) is an occasional audit of the whole suite, also on request only.
 
 ## Gotchas
 

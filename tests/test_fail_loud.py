@@ -6,6 +6,7 @@ check that raises for the wrong reason does not pass.
 """
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import jax_da as jd
@@ -48,6 +49,15 @@ CONSTRUCTION = {
     "Lorenz63 zero substeps": (lambda: jd.Lorenz63(substeps=0), "substeps"),
     "Ring with no sites": (lambda: jd.Ring(0), "positive"),
     "Torus with no rows": (lambda: jd.Torus2D(0, 3), "positive"),
+    "Embedded matrix columns != law dim": (lambda: jd.Embedded(jd.Gaussian.isotropic(3, 1.0), jnp.ones((4, 2))), "3 columns"),
+    "Embedded matrix not 2D": (lambda: jd.Embedded(jd.Gaussian.isotropic(2, 1.0), jnp.ones(3)), "matrix"),
+    "Embedded matrix with NaN": (lambda: jd.Embedded(jd.Gaussian.isotropic(2, 1.0), jnp.array([[jnp.nan, 0.0]])), "matrix.*finite"),
+    "Precomposed map dim != law in_dim": (lambda: jd.Precomposed(OBS, jd.Selector(6, (0, 1))), "in_dim"),
+    "Lagged zero lags": (lambda: jd.Lagged(TRANSITION, 0), "lags"),
+    "Lagged non-square transition": (lambda: jd.Lagged(OBS, 2), "R\\^D"),
+    "History zero lags": (lambda: jd.History(jd.Gaussian.isotropic(4, 1.0), TRANSITION, 0), "lags"),
+    "History transition size != initial": (lambda: jd.History(jd.Gaussian.isotropic(3, 1.0), TRANSITION, 2), "initial.dim = 3"),
+    "delayed fractional lags": (lambda: jd.delayed(MODEL, 1.5), "lags"),
 }
 
 CALLS = {
@@ -66,6 +76,7 @@ CALLS = {
     "metrics NaN ensemble": (lambda: metrics.rmse(jnp.full((3, 5, 2), jnp.nan), jnp.zeros((3, 2))), "ensemble.*finite"),
     "metrics NaN truth": (lambda: metrics.crps(jnp.zeros((3, 5, 2)), jnp.full((3, 2), jnp.nan)), "truth.*finite"),
     "crps_gaussian zero std": (lambda: metrics.crps_gaussian(jnp.zeros(2), jnp.zeros(2), jnp.ones(2)), "std must be positive"),
+    "Embedded log_prob": (lambda: jd.Embedded(jd.Gaussian.isotropic(1, 1.0), jnp.ones((2, 1))).log_prob(jnp.zeros(2)), "no density"),
     "crps_gaussian shape mismatch": (lambda: metrics.crps_gaussian(jnp.zeros(3), jnp.ones(2), jnp.ones(2)), "same shape"),
 }
 
@@ -74,6 +85,11 @@ PRESETS = {
     "stochastic_volatility beta 0": (lambda: jd.problems.stochastic_volatility(beta=0.0), "beta"),
     "stochastic_volatility sigma negative": (lambda: jd.problems.stochastic_volatility(sigma=-0.1), "sigma"),
     "advection_diffusion obs_every 0": (lambda: jd.problems.advection_diffusion((16,), obs_every=0), "obs_every"),
+    "advection_diffusion empty forcing_mask": (lambda: jd.problems.advection_diffusion((16,), forcing_mask=np.zeros(16, dtype=bool)), "forcing_mask"),
+    "advection_diffusion forcing_mask wrong shape": (lambda: jd.problems.advection_diffusion((16,), forcing_mask=np.ones(8, dtype=bool)), "forcing_mask"),
+    "integrated_random_walk order 0": (lambda: jd.problems.integrated_random_walk(order=0), "order"),
+    "integrated_random_walk dt 0": (lambda: jd.problems.integrated_random_walk(dt=0.0), "dt"),
+    "integrated_random_walk unknown discretization": (lambda: jd.problems.integrated_random_walk(discretization="rk4"), "discretization"),
 }
 
 

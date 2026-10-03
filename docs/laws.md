@@ -20,6 +20,8 @@ A law is a probability distribution on $\mathbb{R}^d$: the initial law of a mode
 | `Laplace` | `Laplace(d, scale, loc=0)` or `Laplace.with_std(d, std)` | $2\, \text{scale}^2$ |
 | `GaussianMixture` | `GaussianMixture(d, std, outlier_prob, outlier_scale, loc=0)` | $\text{std}^2 (1 - p + p\, k^2)$ |
 | `PointMass` | `PointMass(value)` | 0; no density |
+| `Embedded` | `Embedded(law, G)`: the law of $G z$, $z \sim$ `law` | $G \Sigma G^\top$; no density when $G$ has fewer columns than rows |
+| `History` | `History(initial, transition, L)`: the first $L + 1$ states of a trajectory, newest first | not in closed form (raises); `log_prob` is the chain density |
 
 All laws except `Gaussian.full` are independent across components; `scale`/`std` may be a scalar or a `(d,)` vector.
 Heavy-tailed laws use the textbook `scale`; `with_std` builds one whose standard deviation matches a Gaussian, for comparisons at equal spread.
@@ -41,6 +43,8 @@ A conditional law is the law of an output given a state: a transition $x_t \mid 
 | `Additive(map, noise=None)` | $\text{map}(x) + \varepsilon$ | `noise.log_prob(out - map(x))`; no density when `noise` is None |
 | `Multiplicative(log_scale, noise)` | $e^{g(x)} \odot \varepsilon$, $g$ = `log_scale` | `noise.log_prob(out / s) - sum(log s)`, $s = e^{g(x)}$ |
 | `Poisson(log_rate)` | independent counts with rate $e^{r(x)}$ | Poisson log-pmf; counts returned as floats |
+| `Precomposed(law, map)` | `law` given `map(x)` | `law.log_prob(out, map(x))` |
+| `Lagged(transition, L)` | stacked history: new block from `transition`, others shifted | base density of the new block; $-\infty$ if the shift is inconsistent |
 
 `Additive` is the classical data assimilation form and exposes `map` and `noise`, which Kalman-type methods and the oracle read.
 `Multiplicative` with a standard Gaussian is $N(0, \operatorname{diag}(s^2))$, the stochastic volatility observation; its log-density uses $g(x)$ directly, so tiny scales never produce $\log 0$.

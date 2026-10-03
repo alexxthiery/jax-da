@@ -82,8 +82,8 @@ The model is built from three kinds of object, each usable on its own and each d
 | Kind | Members | Built-ins | Docs |
 |------|---------|-----------|------|
 | Map $\mathbb{R}^m \to \mathbb{R}^n$ | `in_dim` ($m$), `dim` ($n$), `map(x)` | `Linear` (affine), `Selector`, `Elementwise`, `Function` (any JAX function), and the dynamics below | [docs/maps.md](docs/maps.md) |
-| Law on $\mathbb{R}^d$ | `dim`, `loc`, `sample`, `log_prob`, `cov` | `Gaussian` (isotropic, diagonal, full), `StudentT`, `Cauchy`, `Laplace`, `GaussianMixture`, `PointMass` | [docs/laws.md](docs/laws.md) |
-| Conditional law | `in_dim`, `dim`, `sample(key, x)`, `log_prob(out, x)`, `mean(x)` | `Additive` ($f(x) + \varepsilon$), `Multiplicative` ($e^{g(x)} \odot \varepsilon$), `Poisson` | [docs/laws.md](docs/laws.md#conditional-laws) |
+| Law on $\mathbb{R}^d$ | `dim`, `loc`, `sample`, `log_prob`, `cov` | `Gaussian` (isotropic, diagonal, full), `StudentT`, `Cauchy`, `Laplace`, `GaussianMixture`, `PointMass`, `Embedded` (noise on a subspace), `History` | [docs/laws.md](docs/laws.md) |
+| Conditional law | `in_dim`, `dim`, `sample(key, x)`, `log_prob(out, x)`, `mean(x)` | `Additive` ($f(x) + \varepsilon$), `Multiplicative` ($e^{g(x)} \odot \varepsilon$), `Poisson`, `Precomposed`, `Lagged` | [docs/laws.md](docs/laws.md#conditional-laws) |
 
 ## Dynamics
 
@@ -102,8 +102,10 @@ Linear dynamics are `Linear`, and any JAX function is `Function` ([docs/function
 
 ## Presets
 
-`jax_da.problems` returns ready-made models with settings from the literature: `linear_gaussian`, `linear_gaussian_full` (dense $A$ and $H$, full $Q$, $R$, $P_0$), `advection_diffusion` (high-dimensional, spatially structured, exact; [docs/advection_diffusion.md](docs/advection_diffusion.md)), `stochastic_volatility` and `nonlinear_poisson` (non-additive observations, for particle methods), `lorenz63`, `lorenz96`, `lorenz96_two_scale`, `kuramoto_sivashinsky`, `kolmogorov`.
+`jax_da.problems` returns ready-made models with settings from the literature: `linear_gaussian`, `linear_gaussian_full` (dense $A$ and $H$, full $Q$, $R$, $P_0$), `advection_diffusion` (high-dimensional, spatially structured, exact; [docs/advection_diffusion.md](docs/advection_diffusion.md)), `stochastic_volatility` and `nonlinear_poisson` (non-additive observations, for particle methods), `integrated_random_walk` (position observed, noise on a high derivative), `lorenz63`, `lorenz96`, `lorenz96_two_scale`, `kuramoto_sivashinsky`, `kolmogorov`.
 See [docs/problems.md](docs/problems.md).
+
+`jd.delayed(ssm, L)` turns any model into its delayed-observation version ($y_t$ observes $x_{t-L}$), and `Embedded` puts noise on a subspace; together with `integrated_random_walk` and the `forcing_mask` option of `advection_diffusion` they build models where observations see only noise injected several steps earlier, a known failure mode of particle methods ([docs/partial_noise.md](docs/partial_noise.md)).
 
 ## Scoring
 

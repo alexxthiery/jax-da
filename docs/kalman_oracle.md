@@ -1,6 +1,7 @@
 # KalmanOracle
 
 Exact filtering, smoothing, and evidence for linear-Gaussian state-space models: `Additive` transition and observation with a `Linear` or `Selector` map and `Gaussian` (or no) noise, and a `Gaussian` or `PointMass` initial law.
+Model error may be singular (`Embedded` Gaussian noise), and `Lagged` transitions, `Precomposed` observations with a linear map, and `History` or `Embedded` initial laws are accepted, so `delayed` linear-Gaussian models are solved exactly.
 Affine offsets are allowed: the model is $x_t = A x_{t-1} + b + \eta_t$, $y_t = H x_t + c + \varepsilon_t$, where $b$ and $c$ collect the `Linear.offset` and the noise `loc`.
 It is the reference for testing a method on the one model class where the answer is known.
 

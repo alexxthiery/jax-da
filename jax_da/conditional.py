@@ -149,3 +149,96 @@ class Poisson:
                 raise ValueError("Poisson counts must be nonnegative integers")
         log_rate = self.log_rate(x)
         return (out * log_rate - jnp.exp(log_rate) - gammaln(out + 1.0)).sum(-1)
+
+
+@struct.dataclass
+class Precomposed:
+    """``out | x`` distributed as ``law`` given ``map(x)``: point any conditional law at a function of the state.
+
+    For example ``Precomposed(observation, Selector(D, block))`` observes one block of a
+    stacked state with an existing observation law.
+
+    Attributes:
+        law: Conditional law with ``in_dim == map.dim``.
+        map: Map ``(..., in_dim) -> (..., law.in_dim)``.
+    """
+
+    law: object
+    map: object
+
+    def __post_init__(self):
+        require_map(self.map, "Precomposed map")
+        if not placeholder_dims(self.law, self.map) and self.law.in_dim != self.map.dim:
+            raise ValueError(f"law.in_dim={self.law.in_dim} != map.dim={self.map.dim}")
+
+    @property
+    def in_dim(self) -> int:
+        return self.map.in_dim
+
+    @property
+    def dim(self) -> int:
+        return self.law.dim
+
+    def mean(self, x: Array) -> Array:
+        return self.law.mean(self.map(x))
+
+    def sample(self, key: Array, x: Array) -> Array:
+        return self.law.sample(key, self.map(x))
+
+    def log_prob(self, out: Array, x: Array) -> Array:
+        return self.law.log_prob(out, self.map(x))
+
+
+@struct.dataclass
+class Lagged:
+    """Transition of the stacked history ``u_t = (x_t, x_{t-1}, ..., x_{t-lags})``, newest block first.
+
+    The newest block is drawn from ``transition`` given ``x_{t-1}``; the other blocks
+    shift by one. ``log_prob`` is the base transition density of the newest block when
+    the shifted blocks agree exactly, and ``-inf`` otherwise (the shift is deterministic).
+
+    Attributes:
+        transition: Conditional law on ``R^D`` with ``in_dim == dim == D``.
+        lags: Number of past states kept, ``L >= 1`` (static).
+    """
+
+    transition: object
+    lags: int = struct.field(pytree_node=False)
+
+    def __post_init__(self):
+        if not isinstance(self.lags, int) or self.lags < 1:
+            raise ValueError(f"lags must be a positive integer, got {self.lags!r}")
+        if not placeholder_dims(self.transition) and self.transition.in_dim != self.transition.dim:
+            raise ValueError(f"transition must map R^D to R^D, got in_dim={self.transition.in_dim}, "
+                             f"dim={self.transition.dim}")
+
+    @property
+    def block(self) -> int:
+        return self.transition.dim
+
+    @property
+    def in_dim(self) -> int:
+        return (self.lags + 1) * self.block
+
+    @property
+    def dim(self) -> int:
+        return self.in_dim
+
+    def _shifted(self, x: Array) -> Array:
+        return x[..., : self.lags * self.block]
+
+    def mean(self, x: Array) -> Array:
+        check_event_shape(x, (self.in_dim,))
+        return jnp.concatenate([self.transition.mean(x[..., : self.block]), self._shifted(x)], axis=-1)
+
+    def sample(self, key: Array, x: Array) -> Array:
+        check_event_shape(x, (self.in_dim,))
+        return jnp.concatenate([self.transition.sample(key, x[..., : self.block]), self._shifted(x)], axis=-1)
+
+    def log_prob(self, out: Array, x: Array) -> Array:
+        check_event_shape(out, (self.dim,), "out")
+        check_event_shape(x, (self.in_dim,))
+        consistent = jnp.all(out[..., self.block:] == self._shifted(x), axis=-1)
+        density = self.transition.log_prob(out[..., : self.block], x[..., : self.block])
+        return jnp.where(consistent, density, -jnp.inf)
+

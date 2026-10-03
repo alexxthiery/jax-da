@@ -40,6 +40,9 @@ Inside `jit` values cannot be inspected, so a NaN produced there propagates; run
 Per-component parameters (`std`, `scale`, `loc`, `offset`) are normalized to shape `(dim,)` at construction, so a length-1 vector is rejected instead of silently broadcast.
 `tests/test_fail_loud.py` holds one case per mistake.
 
+**Singular laws are explicit.** Noise on a subspace and singular stationary laws are `Embedded` laws with a declared range; `Gaussian.full` keeps rejecting a singular covariance, so singularity never enters by accident.
+A stacked-history model starts from the first states of a genuine trajectory (`History`), so its delayed observations have exactly the base model's law.
+
 **Pytree-safe validation.** `__post_init__` also runs when JAX rebuilds a pytree, with non-numeric placeholder leaves (`object()`, `None`, or tuples from `tree.map(jnp.shape, ...)`) or with batched leaves `(..., dim)`.
 Checks skip non-numeric leaves and read dimensions from trailing axes, so rebuilds and `vmap`-batched models work.
 Plain integers are validated like any parameter, so a `vmap` `in_axes` tree built by mapping every leaf to `0` is rejected; use `in_axes=0` or a prefix instead.

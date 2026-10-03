@@ -26,7 +26,6 @@ python -m pytest -m pde     # Exponax-backed models
 ```
 
 Tests compare against independent references, never against stored outputs of the code itself; a shape-only or "runs without error" test does not protect a behavior.
-Prove a new test is useful with a mutant: add the most plausible wrong implementation to `tools/mutate.py`, see it survive without the test and get killed by it (workflow in `AGENTS.md`).
+`tools/mutate.py` holds plausible bugs that the suite must catch; mutation runs are an occasional, on-request audit, not a step of every change (workflow in `AGENTS.md`).
 Every new validation gets a case in `tests/test_fail_loud.py` with a `match=` on its message.
 Monte Carlo checks set their tolerance from the standard error they expect.
-After a behavior change, run `python tools/mutate.py`; every mutant must be killed, and new behavior gets a new mutant.

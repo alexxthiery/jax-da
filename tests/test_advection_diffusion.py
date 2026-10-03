@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import jax_da as jd
 from jax_da import problems
 from jax_da.geometry import Ring, Torus2D
 from jax_da.oracles import KalmanOracle
@@ -81,3 +82,36 @@ def test_geometry_network_and_validation():
     assert torus.geometry == Torus2D(6, 4) and torus.observation.map.indices == (0, 2, 8, 10, 16, 18)
     with pytest.raises(ValueError, match="damping"):
         problems.advection_diffusion((16,), damping=0.0)
+
+
+def upstream_band(n=64, width=8):
+    mask = np.zeros(n, dtype=bool)
+    mask[:width] = True
+    return mask
+
+
+def test_forcing_mask_confines_noise_and_keeps_the_initial_law_stationary():
+    ssm = problems.advection_diffusion((64,), obs_every=8, forcing_mask=upstream_band())
+    draws = np.asarray(ssm.transition.noise.sample(jax.random.PRNGKey(0), (1000,)))
+    assert np.all(draws[:, 8:] == 0.0) and np.all(draws[:, :8].std(0) > 0)
+    A, Q, S = (np.asarray(m) for m in (ssm.transition.map.matrix, ssm.transition.noise.cov(), ssm.initial.cov()))
+    np.testing.assert_allclose(A @ S @ A.T + Q, S, atol=1e-10)
+
+
+def test_forced_noise_reaches_a_downstream_sensor_after_the_travel_time():
+    # Pure advection by one cell per step: noise injected in cells 0..7 reaches cell 30 after 23 steps.
+    ssm = problems.advection_diffusion((64,), velocity=1.0, diffusivity=0.0, damping=0.05, obs_every=8,
+                                       forcing_mask=upstream_band())
+    A, G = np.asarray(ssm.transition.map.matrix), np.asarray(ssm.transition.noise.matrix)
+    reach = [float(np.abs((np.linalg.matrix_power(A, k) @ G)[30]).max()) for k in range(30)]
+    assert max(reach[:23]) < 1e-12 and reach[23] > 0.1
+
+
+def test_forcing_mask_model_is_exact_for_the_oracle_and_buildable_in_float32():
+    ssm = problems.advection_diffusion((64,), obs_every=8, forcing_mask=upstream_band())
+    f = KalmanOracle.from_ssm(ssm).filter(ssm.simulate(jax.random.PRNGKey(1), 20).observations)
+    assert bool(jnp.all(jnp.isfinite(f.covs)))
+    with jax.experimental.enable_x64(False):
+        problems.advection_diffusion((64,), obs_every=8, forcing_mask=upstream_band())
+    # The initial law keeps the singular stationary covariance exactly, as a low-rank law.
+    assert isinstance(ssm.initial, jd.Embedded) and ssm.initial.matrix.shape[1] < 64

@@ -8,6 +8,8 @@ when ``initial_std`` is 0).
 The same arguments always give the same model.
 """
 
+import math
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -20,7 +22,7 @@ from jax_da.dynamics.lorenz96 import Lorenz96
 from jax_da.dynamics.lorenz96_two_scale import Lorenz96TwoScale
 from jax_da.dynamics.tanh_squared import TanhSquared
 from jax_da.geometry import Ring, Torus2D
-from jax_da.laws import Gaussian, PointMass
+from jax_da.laws import Embedded, Gaussian, PointMass
 from jax_da.maps import Linear, Selector
 from jax_da.ssm import StateSpaceModel
 
@@ -109,10 +111,34 @@ def _fourier_operator(multiplier: np.ndarray) -> np.ndarray:
     return images.real.reshape(dim, dim).T
 
 
+def _stationary_covariance(A: np.ndarray, Q: np.ndarray, tol: float = 1e-13) -> np.ndarray:
+    """``sum_k A^k Q A^kT`` by doubling: ``S <- S + M S M^T``, ``M <- M M``; needs a contractive ``A``."""
+    S, M = Q.copy(), A.copy()
+    for _ in range(64):
+        increment = M @ S @ M.T
+        S = S + increment
+        M = M @ M
+        if np.abs(increment).max() <= tol * np.abs(S).max():
+            return 0.5 * (S + S.T)
+    raise ValueError("stationary covariance did not converge; the dynamics must be contractive (damping > 0)")
+
+
+def _low_rank_gaussian(cov: np.ndarray, rtol: float = 1e-12) -> Embedded:
+    """Zero-mean Gaussian with covariance ``cov`` (PSD, possibly singular) as an ``Embedded`` law.
+
+    Eigenvalues below ``rtol`` times the largest are dropped, a relative change of at
+    most ``rtol`` in the covariance.
+    """
+    values, vectors = np.linalg.eigh(cov)
+    keep = values > rtol * values.max()
+    factor = vectors[:, keep] * np.sqrt(values[keep])
+    return Embedded(Gaussian.isotropic(int(keep.sum()), 1.0), jnp.asarray(factor))
+
+
 def advection_diffusion(grid_shape: tuple[int, ...] = (256,), dt: float = 1.0, velocity=1.0,
                         diffusivity: float = 0.1, damping: float = 0.02, noise_length: float = 10.0,
                         model_error_std: float = 0.2, obs_every: int = 8, obs_std: float = 0.5,
-                        nugget: float = 0.01) -> StateSpaceModel:
+                        nugget: float = 0.01, forcing_mask=None) -> StateSpaceModel:
     """Stochastic advection-diffusion on a periodic ring or torus, in statistical equilibrium. Exact via ``KalmanOracle``.
 
         du/dt + c . grad u = kappa Laplacian(u) - lambda u + noise
@@ -128,9 +154,16 @@ def advection_diffusion(grid_shape: tuple[int, ...] = (256,), dt: float = 1.0, v
     needs ``damping > 0``. Every ``obs_every``-th grid point along each axis is
     observed with noise std ``obs_std``.
 
+    With ``forcing_mask`` (a boolean array of shape ``grid_shape``), the model error
+    is the same correlated noise restricted to the masked cells and zero elsewhere (an
+    ``Embedded`` law), so noise injected upstream reaches downstream sensors only after
+    the advection travel time. The stationary covariance is then computed by summing
+    ``A^k Q A^kT`` (doubling), since it is no longer translation invariant.
+
     Args:
         grid_shape: ``(n,)`` for a ring or ``(height, width)`` for a torus.
         velocity: Advection speed in cells per time unit, scalar or one per axis.
+        forcing_mask: Cells that receive model error; all cells if None.
 
     Returns:
         A linear-Gaussian ``StateSpaceModel`` with ``Ring`` or ``Torus2D`` geometry.
@@ -157,15 +190,68 @@ def advection_diffusion(grid_shape: tuple[int, ...] = (256,), dt: float = 1.0, v
     sigma = q / (1 - np.abs(a) ** 2)
 
     dim = int(np.prod(shape))
+    A, Q = _fourier_operator(a), _fourier_operator(q)
+    noise, initial = Gaussian.full(jnp.asarray(Q)), Gaussian.full(jnp.asarray(_fourier_operator(sigma)))
+    if forcing_mask is not None:
+        mask = np.asarray(forcing_mask)
+        if mask.shape != shape or mask.dtype != bool or not mask.any():
+            raise ValueError(f"forcing_mask must be a boolean array of shape {shape} with at least one True cell")
+        forced = np.flatnonzero(mask)  # row-major flat indices
+        embed, Q_forced = np.eye(dim)[:, forced], Q[np.ix_(forced, forced)]
+        noise = Embedded(Gaussian.full(jnp.asarray(Q_forced)), jnp.asarray(embed))
+        # With diffusion, cells far downstream of the forcing receive only heavily damped
+        # high-wavenumber content, so the stationary covariance is singular to machine
+        # precision. Keep it exactly as a low-rank law instead of regularizing it.
+        initial = _low_rank_gaussian(_stationary_covariance(A, embed @ Q_forced @ embed.T))
     layout = Ring(shape[0]) if len(shape) == 1 else Torus2D(*shape)
     observed = np.zeros(shape, dtype=bool)
     observed[tuple(slice(0, None, obs_every) for _ in shape)] = True
     indices = tuple(int(i) for i in np.flatnonzero(observed))  # row-major flat indices
     return StateSpaceModel(
-        initial=Gaussian.full(jnp.asarray(_fourier_operator(sigma))),
-        transition=Additive(Linear(jnp.asarray(_fourier_operator(a))), Gaussian.full(jnp.asarray(_fourier_operator(q)))),
+        initial=initial,
+        transition=Additive(Linear(jnp.asarray(A)), noise),
         observation=Additive(Selector(dim, indices), Gaussian.isotropic(len(indices), obs_std)),
         geometry=layout,
+    )
+
+
+def integrated_random_walk(order: int = 2, dt: float = 1.0, noise_std: float = 1.0, obs_std: float = 1.0,
+                           initial_std: float = 1.0, discretization: str = "exact") -> StateSpaceModel:
+    """A Brownian motion integrated ``order - 1`` times, observed in its lowest coordinate.
+
+    The state is ``(position, velocity, ...)`` with ``order`` components; white noise of
+    intensity ``noise_std`` drives the highest derivative and only the position is
+    observed. ``order=2`` is the constant-velocity tracking model, ``order=3`` constant
+    acceleration. Fresh noise reaches the observation only through ``order - 1``
+    integrations, so a particle filter must select on noise injected several steps ago.
+
+    ``discretization="exact"`` integrates the linear SDE over ``dt``: ``A = expm(N dt)``
+    and ``Q_ij = noise_std^2 dt^(2n-1-i-j) / ((n-1-i)! (n-1-j)! (2n-1-i-j))``, full rank
+    but with ``H Q H^T = O(dt^(2n-1))``. ``discretization="euler"`` uses ``A = I + N dt``
+    and noise ``noise_std * sqrt(dt)`` on the highest derivative only (an ``Embedded``
+    law), so ``H A^k G = 0`` exactly for ``k < order - 1``. Both are exact for
+    ``KalmanOracle``.
+    """
+    if not isinstance(order, int) or order < 1:
+        raise ValueError(f"order must be a positive integer, got {order!r}")
+    if not dt > 0:
+        raise ValueError(f"dt must be positive, got {dt}")
+    if discretization not in ("exact", "euler"):
+        raise ValueError(f"discretization must be 'exact' or 'euler', got {discretization!r}")
+    n = order
+    if discretization == "exact":
+        A = np.array([[dt ** (j - i) / math.factorial(j - i) if j >= i else 0.0 for j in range(n)] for i in range(n)])
+        Q = np.array([[noise_std ** 2 * dt ** (2 * n - 1 - i - j)
+                       / (math.factorial(n - 1 - i) * math.factorial(n - 1 - j) * (2 * n - 1 - i - j))
+                       for j in range(n)] for i in range(n)])
+        noise = Gaussian.full(jnp.asarray(Q))
+    else:
+        A = np.eye(n) + dt * np.diag(np.ones(n - 1), 1)
+        noise = Embedded(Gaussian.isotropic(1, noise_std * math.sqrt(dt)), jnp.asarray(np.eye(n)[:, -1:]))
+    return StateSpaceModel(
+        initial=Gaussian.isotropic(n, initial_std),
+        transition=Additive(Linear(jnp.asarray(A)), noise),
+        observation=Additive(Selector(n, (0,)), Gaussian.isotropic(1, obs_std)),
     )
 
 

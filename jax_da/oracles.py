@@ -1,8 +1,11 @@
 """Exact answers for linear-Gaussian state-space models.
 
 A ``StateSpaceModel`` is linear-Gaussian when its transition and observation
-are ``Additive`` with a ``Linear`` or ``Selector`` map and ``Gaussian`` noise
-(or no noise), and its initial law is ``Gaussian`` or ``PointMass``. Affine
+are ``Additive`` with a ``Linear`` or ``Selector`` map and ``Gaussian`` (or
+``Embedded`` Gaussian, or no) noise, and its initial law is ``Gaussian`` or
+``PointMass``. ``Lagged`` transitions, ``Precomposed`` observations with a linear
+map, and ``History`` initial laws built from such parts are accepted too, so
+``delayed`` linear-Gaussian models are solved exactly. Affine
 offsets (``Linear.offset`` and a noise ``loc``) are allowed. For such a model
 the filtering and smoothing distributions are Gaussian and the Kalman
 recursions compute them exactly.
@@ -16,8 +19,8 @@ from jax import Array
 from jax.scipy.linalg import cho_factor, cho_solve
 
 from jax_da._validation import check_finite, is_concrete
-from jax_da.conditional import Additive
-from jax_da.laws import Gaussian, PointMass
+from jax_da.conditional import Additive, Lagged, Precomposed
+from jax_da.laws import Embedded, Gaussian, History, PointMass
 from jax_da.maps import Linear, Selector
 from jax_da.ssm import StateSpaceModel
 
@@ -54,16 +57,69 @@ class SmootherResult:
     covs: Array
 
 
+def _linear(map, name):
+    """``(matrix, offset)`` of a ``Linear`` or ``Selector`` map."""
+    if not isinstance(map, (Linear, Selector)):
+        raise ValueError(f"KalmanOracle needs the {name} to be Linear or Selector, got {type(map).__name__}")
+    return map.matrix, jnp.broadcast_to(getattr(map, "offset", 0.0), (map.dim,))
+
+
+def _is_gaussian(law) -> bool:
+    return isinstance(law, Gaussian) or (isinstance(law, Embedded) and isinstance(law.law, Gaussian))
+
+
+def _transition_params(law):
+    """``(A, b, Q)``; a ``Lagged`` transition becomes its block companion form."""
+    if isinstance(law, Lagged):
+        A, b, Q = _transition_params(law.transition)
+        D, n = law.block, law.dim
+        A_big = jnp.zeros((n, n)).at[:D, :D].set(A).at[D:, : n - D].set(jnp.eye(n - D))
+        return A_big, jnp.zeros(n).at[:D].set(b), jnp.zeros((n, n)).at[:D, :D].set(Q)
+    return _affine_gaussian(law, "transition")
+
+
+def _observation_params(law):
+    """``(H, c, R)``; a ``Precomposed`` observation composes its linear map."""
+    if isinstance(law, Precomposed):
+        H, c, R = _observation_params(law.law)
+        M, offset = _linear(law.map, "observation map")
+        return H @ M, H @ offset + c, R
+    return _affine_gaussian(law, "observation")
+
+
+def _initial_moments(law):
+    """``(m0, P0)``; a ``History`` gets the exact stacked moments of its trajectory."""
+    if isinstance(law, History):
+        m, P = _initial_moments(law.initial)
+        A, b, Q = _transition_params(law.transition)
+        means, covs = [m], [P]  # oldest first: x_0, x_1, ..., x_L
+        for _ in range(law.lags):
+            means.append(A @ means[-1] + b)
+            covs.append(A @ covs[-1] @ A.T + Q)
+        L, D = law.lags, law.block
+        big = jnp.zeros((law.dim, law.dim))
+        for j in range(L + 1):
+            for k in range(j + 1):
+                block = jnp.linalg.matrix_power(A, j - k) @ covs[k]  # Cov(x_j, x_k), j >= k
+                rj, rk = (L - j) * D, (L - k) * D  # newest-first placement
+                big = big.at[rj:rj + D, rk:rk + D].set(block).at[rk:rk + D, rj:rj + D].set(block.T)
+        return jnp.concatenate(means[::-1]), big
+    if not (_is_gaussian(law) or isinstance(law, PointMass)):
+        raise ValueError(f"KalmanOracle needs a Gaussian, Embedded Gaussian, PointMass, or History initial law, "
+                         f"got {type(law).__name__}")
+    return jnp.broadcast_to(law.loc, (law.dim,)), law.cov()
+
+
 def _affine_gaussian(law, name):
     """``(matrix, offset, cov)`` of an ``Additive`` law with a linear map and Gaussian (or no) noise."""
-    if not isinstance(law, Additive) or not isinstance(law.map, (Linear, Selector)):
+    if not isinstance(law, Additive):
         raise ValueError(f"KalmanOracle needs the {name} to be Additive with a Linear or Selector map")
-    offset = jnp.broadcast_to(getattr(law.map, "offset", 0.0), (law.dim,))
+    matrix, offset = _linear(law.map, f"{name} map")
     if law.noise is None:
-        return law.map.matrix, offset, jnp.zeros((law.dim, law.dim))
-    if not isinstance(law.noise, Gaussian):
+        return matrix, offset, jnp.zeros((law.dim, law.dim))
+    if not _is_gaussian(law.noise):
         raise ValueError(f"KalmanOracle needs Gaussian {name} noise, got {type(law.noise).__name__}")
-    return law.map.matrix, offset + law.noise.loc, law.noise.cov()
+    return matrix, offset + law.noise.loc, law.noise.cov()
 
 
 @struct.dataclass
@@ -100,12 +156,10 @@ class KalmanOracle:
         Raises:
             ValueError: If ``ssm`` is not linear-Gaussian.
         """
-        A, b, Q = _affine_gaussian(ssm.transition, "transition")
-        H, c, R = _affine_gaussian(ssm.observation, "observation")
-        if not isinstance(ssm.initial, (Gaussian, PointMass)):
-            raise ValueError(f"KalmanOracle needs a Gaussian or PointMass initial law, got {type(ssm.initial).__name__}")
-        m0 = jnp.broadcast_to(ssm.initial.loc, (ssm.state_dim,))
-        return cls(A=A, b=b, H=H, c=c, Q=Q, R=R, m0=m0, P0=ssm.initial.cov())
+        A, b, Q = _transition_params(ssm.transition)
+        H, c, R = _observation_params(ssm.observation)
+        m0, P0 = _initial_moments(ssm.initial)
+        return cls(A=A, b=b, H=H, c=c, Q=Q, R=R, m0=m0, P0=P0)
 
     def filter(self, observations: Array) -> FilterResult:
         """Kalman filter over ``y_1..y_T``, shape ``(T, p)``.

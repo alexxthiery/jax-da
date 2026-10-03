@@ -29,6 +29,7 @@ from jax_da._validation import (
     is_concrete,
     is_numeric,
     per_component,
+    placeholder_dims,
 )
 
 
@@ -357,3 +358,115 @@ class PointMass:
 
     def cov(self) -> Array:
         return jnp.zeros((self.dim, self.dim))
+
+
+@struct.dataclass
+class Embedded:
+    """The law of ``matrix @ z`` with ``z ~ law``: noise confined to a subspace of ``R^dim``.
+
+    Use it for process noise that enters only some directions, for example the
+    velocity of a position-velocity model or a few Fourier modes of a PDE. When
+    ``matrix`` has fewer columns than rows the law is singular: it has no density
+    on ``R^dim``, so ``log_prob`` raises, while sampling, ``loc``, and ``cov`` work
+    and the Kalman oracle accepts it when ``law`` is Gaussian. Singular noise is
+    declared explicitly this way; ``Gaussian.full`` still rejects a singular
+    covariance.
+
+    Attributes:
+        law: Law of ``z``, dimension ``r``.
+        matrix: Shape ``(dim, r)``.
+    """
+
+    law: object
+    matrix: Array
+
+    def __post_init__(self):
+        if not is_numeric(self.matrix):
+            return
+        if np.ndim(self.matrix) < 2:
+            raise ValueError(f"matrix must have shape (dim, r), got shape {np.shape(self.matrix)}")
+        check_finite(self.matrix, "matrix")
+        inner_dim = getattr(self.law, "dim", None)
+        if isinstance(inner_dim, int) and np.shape(self.matrix)[-1] != inner_dim:
+            raise ValueError(f"matrix must have {inner_dim} columns to embed a law of dimension {inner_dim}, "
+                             f"got shape {np.shape(self.matrix)}")
+
+    @property
+    def dim(self) -> int:
+        return int(self.matrix.shape[-2])
+
+    @property
+    def loc(self) -> Array:
+        return jnp.broadcast_to(self.law.loc, (self.law.dim,)) @ self.matrix.T
+
+    def sample(self, key: Array, shape: tuple[int, ...] = ()) -> Array:
+        return self.law.sample(key, shape) @ self.matrix.T
+
+    def log_prob(self, x: Array) -> Array:
+        raise ValueError("an Embedded law is confined to a subspace and has no density on R^dim")
+
+    def variance(self) -> Array:
+        return jnp.diag(self.cov())
+
+    def cov(self) -> Array:
+        return self.matrix @ self.law.cov() @ self.matrix.T
+
+
+@struct.dataclass
+class History:
+    """Law of the first ``lags + 1`` states of a trajectory, stacked newest first: ``(x_L, ..., x_1, x_0)``.
+
+    ``x_0 ~ initial`` and ``x_k | x_{k-1} ~ transition``. It is the initial law of a
+    model on stacked histories (see ``jax_da.delayed``). ``log_prob`` is the chain
+    density ``log p(x_0) + sum_k log p(x_k | x_{k-1})`` and raises when a factor has
+    no density.
+
+    Attributes:
+        initial: Law of ``x_0`` on ``R^D``.
+        transition: Conditional law on ``R^D``.
+        lags: ``L >= 1`` (static).
+    """
+
+    initial: object
+    transition: object
+    lags: int = struct.field(pytree_node=False)
+
+    def __post_init__(self):
+        if not isinstance(self.lags, int) or self.lags < 1:
+            raise ValueError(f"lags must be a positive integer, got {self.lags!r}")
+        if not placeholder_dims(self.initial, self.transition) and \
+                not self.transition.in_dim == self.transition.dim == self.initial.dim:
+            raise ValueError(f"transition must map R^D to R^D with D = initial.dim = {self.initial.dim}, "
+                             f"got in_dim={self.transition.in_dim}, dim={self.transition.dim}")
+
+    @property
+    def block(self) -> int:
+        return self.initial.dim
+
+    @property
+    def dim(self) -> int:
+        return (self.lags + 1) * self.block
+
+    def sample(self, key: Array, shape: tuple[int, ...] = ()) -> Array:
+        keys = jax.random.split(key, self.lags + 1)
+        states = [self.initial.sample(keys[0], shape)]
+        for k in range(1, self.lags + 1):
+            states.append(self.transition.sample(keys[k], states[-1]))
+        return jnp.concatenate(states[::-1], axis=-1)
+
+    def log_prob(self, x: Array) -> Array:
+        check_event_shape(x, (self.dim,))
+        D = self.block
+        oldest_first = [x[..., (self.lags - k) * D:(self.lags - k + 1) * D] for k in range(self.lags + 1)]
+        total = self.initial.log_prob(oldest_first[0])
+        for k in range(1, self.lags + 1):
+            total = total + self.transition.log_prob(oldest_first[k], oldest_first[k - 1])
+        return total
+
+    def variance(self) -> Array:
+        raise NotImplementedError("History has no closed-form moments in general; "
+                                  "KalmanOracle computes them for linear-Gaussian parts")
+
+    def cov(self) -> Array:
+        return self.variance()
+

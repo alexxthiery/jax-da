@@ -26,18 +26,24 @@ LAWS = {
     "Laplace": lambda: jd.Laplace(3),
     "GaussianMixture": lambda: jd.GaussianMixture(3),
     "PointMass": lambda: jd.PointMass(jnp.arange(3.0)),
+    "Embedded": lambda: jd.Embedded(jd.Gaussian.isotropic(2, 1.0), jnp.array([[1.0, 0.0], [0.5, 1.0], [0.0, 2.0]])),
+    "History": lambda: jd.History(jd.Gaussian.isotropic(1, 1.0), jd.Additive(jd.Linear(jnp.eye(1)), jd.Gaussian.isotropic(1, 0.5)), 2),
 }
+NO_DENSITY = {"PointMass", "Embedded"}
 CONDITIONAL = {
     "Additive": lambda: jd.Additive(jd.Selector.every(6, 2), jd.Gaussian.isotropic(3, 0.5)),
     "Multiplicative": lambda: jd.Multiplicative(jd.Linear(0.5 * jnp.eye(6)[:3]), jd.Gaussian.isotropic(3, 1.0)),
     "Poisson": lambda: jd.Poisson(jd.Linear(0.3 * jnp.eye(6)[:3], offset=0.5)),
+    "Precomposed": lambda: jd.Precomposed(jd.Additive(jd.Linear(jnp.ones((3, 2))), jd.Gaussian.isotropic(3, 1.0)),
+                                          jd.Selector(6, (1, 4))),
+    "Lagged": lambda: jd.Lagged(jd.Additive(jd.Linear(0.9 * jnp.eye(2)), jd.Gaussian.isotropic(2, 0.3)), 2),
 }
 
 
 def test_every_public_component_is_covered():
     public = set(jd.dynamics.__all__) | {"Linear", "Selector", "Elementwise", "Function", "Gaussian", "StudentT",
-                                          "Cauchy", "Laplace", "GaussianMixture", "PointMass", "Additive",
-                                          "Multiplicative", "Poisson"}
+                                          "Cauchy", "Laplace", "GaussianMixture", "PointMass", "Embedded", "History",
+                                          "Additive", "Multiplicative", "Poisson", "Precomposed", "Lagged"}
     assert public == set(MAPS) | set(LAWS) | set(CONDITIONAL)
     assert public <= set(jd.__all__)
 
@@ -97,8 +103,12 @@ def test_law_contract(name):
     assert isinstance(law, Law)
     draws = law.sample(jax.random.PRNGKey(0), (4, 2))
     assert draws.shape == (4, 2, 3)
-    assert name == "Cauchy" or law.cov().shape == (3, 3)
-    if name == "PointMass":
+    if name in ("Cauchy", "History"):
+        with pytest.raises(NotImplementedError):
+            law.cov()
+    else:
+        assert law.cov().shape == (3, 3)
+    if name in NO_DENSITY:
         with pytest.raises(ValueError):
             law.log_prob(draws)
         return

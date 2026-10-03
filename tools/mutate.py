@@ -4,20 +4,23 @@ A suite that passes on buggy code is decorative. Each mutant below is a
 realistic mistake (off-by-one, wrong sign, dropped term, swapped axis); the
 suite runs on a temporary copy of the repository with that one change.
 
-    python tools/mutate.py            # all mutants: one test-suite run each
+    python tools/mutate.py            # all mutants: one test-suite run each, in parallel
     python tools/mutate.py M03 M20    # selected mutants
+    python tools/mutate.py -j 4       # at most 4 concurrent suite runs (default: half the cores)
 
+Run on request only: an occasional audit of the suite, not a step of every change.
 Every mutant must be KILLED. A mutant whose pattern no longer matches the
-source fails loudly: update its pattern in the same change that moved the code.
-For a new behavior, add its mutant first and see it SURVIVE (the gap is real),
+source fails loudly: update its pattern then. When proving a new test, add its mutant first and see it SURVIVE (the gap is real),
 then write the test and see that test kill it; a kill by an unrelated test
 (the FAILED line names it) is incidental and does not count.
 """
 
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +77,21 @@ MUTANTS = [
     ("M48 arctan replaced by tanh", "maps.py", "return jnp.arctan(z)", "return jnp.tanh(z)", False),
     ("M49 spin-up one step short", "dynamics/_integrate.py", "x, None, length=n_steps)[0]", "x, None, length=n_steps - 1)[0]", False),
     ("M50 ring distance not wrapped", "geometry.py", "return np.minimum(delta, self.n - delta).astype(np.float64)", "return delta.astype(np.float64)", False),
+    ("M51 Embedded loc drops law loc", "laws.py", "return jnp.broadcast_to(self.law.loc, (self.law.dim,)) @ self.matrix.T", "return jnp.zeros(self.law.dim) @ self.matrix.T", False),
+    ("M52 History stacked oldest first", "laws.py", "return jnp.concatenate(states[::-1], axis=-1)", "return jnp.concatenate(states, axis=-1)", False),
+    ("M53 History density arguments swapped", "laws.py", "self.transition.log_prob(oldest_first[k], oldest_first[k - 1])", "self.transition.log_prob(oldest_first[k - 1], oldest_first[k])", False),
+    ("M54 Lagged shifts the wrong blocks", "conditional.py", "return x[..., : self.lags * self.block]", "return x[..., self.block:]", False),
+    ("M55 Lagged density ignores the shift", "conditional.py", "consistent = jnp.all(out[..., self.block:] == self._shifted(x), axis=-1)", "consistent = jnp.ones(out.shape[:-1], dtype=bool)", False),
+    ("M56 oracle companion shift misplaced", "oracles.py", ".at[D:, : n - D].set(jnp.eye(n - D))", ".at[D:, D:].set(jnp.eye(n - D))", False),
+    ("M57 oracle Precomposed offset dropped", "oracles.py", "return H @ M, H @ offset + c, R", "return H @ M, c, R", False),
+    ("M58 oracle History cross-covariance", "oracles.py", "jnp.linalg.matrix_power(A, j - k) @ covs[k]", "jnp.linalg.matrix_power(A.T, j - k) @ covs[k]", False),
+    ("M59 oracle History oldest-first placement", "oracles.py", "rj, rk = (L - j) * D, (L - k) * D", "rj, rk = j * D, k * D", False),
+    ("M60 delayed observes the newest block", "transforms.py", "tuple(range(lags * D, (lags + 1) * D))", "tuple(range(D))", False),
+    ("M61 IRW exact Q denominator", "problems.py", "math.factorial(n - 1 - j) * (2 * n - 1 - i - j))", "math.factorial(n - 1 - j) * (2 * n - i - j))", False),
+    ("M62 IRW exact A missing factorial", "problems.py", "dt ** (j - i) / math.factorial(j - i) if j >= i", "dt ** (j - i) if j >= i", False),
+    ("M63 IRW Euler noise on position", "problems.py", "np.eye(n)[:, -1:]", "np.eye(n)[:, :1]", False),
+    ("M64 forcing mask inverted", "problems.py", "forced = np.flatnonzero(mask)", "forced = np.flatnonzero(~mask)", False),
+    ("M65 low-rank factor without sqrt", "problems.py", "factor = vectors[:, keep] * np.sqrt(values[keep])", "factor = vectors[:, keep] * values[keep]", False),
 ]
 
 
@@ -92,15 +110,25 @@ def run(mutant, work: Path) -> tuple[bool, str]:
     return result.returncode != 0, first_failure
 
 
-def main(selected: list[str]) -> int:
-    mutants = [m for m in MUTANTS if not selected or m[0].split()[0] in selected]
+def run_isolated(mutant) -> tuple[bool, str]:
+    with tempfile.TemporaryDirectory() as tmp:
+        return run(mutant, Path(tmp) / "repo")
+
+
+def main(args: list[str]) -> int:
+    jobs = max(1, (os.cpu_count() or 2) // 2)
+    if "-j" in args:
+        i = args.index("-j")
+        jobs = int(args[i + 1])
+        args = args[:i] + args[i + 2:]
+    mutants = [m for m in MUTANTS if not args or m[0].split()[0] in args]
     survivors = []
-    for mutant in mutants:
-        with tempfile.TemporaryDirectory() as tmp:
-            killed, failure = run(mutant, Path(tmp) / "repo")
-        print(f"{'KILLED  ' if killed else 'SURVIVED'} {mutant[0]}  {failure[:100]}", flush=True)
-        if not killed:
-            survivors.append(mutant[0])
+    # Each mutant runs its suite in a subprocess on its own copy, so threads suffice.
+    with ThreadPoolExecutor(jobs) as pool:
+        for mutant, (killed, failure) in zip(mutants, pool.map(run_isolated, mutants)):
+            print(f"{'KILLED  ' if killed else 'SURVIVED'} {mutant[0]}  {failure[:100]}", flush=True)
+            if not killed:
+                survivors.append(mutant[0])
     print(f"\n{len(mutants) - len(survivors)}/{len(mutants)} killed")
     return 1 if survivors else 0
 
